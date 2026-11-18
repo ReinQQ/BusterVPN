@@ -1,0 +1,6 @@
+[target.x86_64-pc-windows-gnu]
+linker = "C:\\Users\\rqqqqitzzz\\AppData\\Local\\Microsoft\\WinGet\\Packages\\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\\mingw64\\bin\\gcc.exe"
+ar = "C:\\Users\\rqqqqitzzz\\AppData\\Local\\Microsoft\\WinGet\\Packages\\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\\mingw64\\bin\\ar.exe"
+
+[env]
+PATH = { value = "C:\\Users\\rqqqqitzzz\\AppData\\Local\\Microsoft\\WinGet\\Packages\\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\\mingw64\\bin", relative = false }

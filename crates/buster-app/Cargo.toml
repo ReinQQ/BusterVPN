@@ -1,0 +1,40 @@
+[package]
+name = "buster-app"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "buster-app"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+buster-core = { path = "../buster-core" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-appender.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+base64.workspace = true
+anyhow.workspace = true
+sha2.workspace = true
+
+tauri = { version = "2", features = ["tray-icon", "image-ico", "image-png"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-deep-link = "2"
+
+[target.'cfg(windows)'.dependencies]
+buster-windows = { path = "../buster-windows" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

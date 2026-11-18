@@ -1,0 +1,32 @@
+[package]
+name = "buster-windows"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+buster-core = { path = "../buster-core" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+winreg.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
+    "Win32_NetworkManagement_WindowsFirewall",
+    "Win32_System_Com",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinInet",
+    "Win32_Graphics_Dwm",
+    "Win32_Storage_FileSystem",
+] }

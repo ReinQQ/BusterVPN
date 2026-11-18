@@ -1,0 +1,22 @@
+# Rust / Tauri
+/target/
+**/target/
+
+# Frontend / Node.js
+node_modules/
+dist/
+.vite/
+
+# Бинарники ядер (лучше хранить в GitHub Releases, а не в коде)
+cores/*.exe
+cores/*.dll
+cores/*.dat
+crates/buster-app/cores/*.exe
+crates/buster-app/cores/*.dll
+crates/buster-app/cores/*.dat
+
+# Системные и IDE файлы
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

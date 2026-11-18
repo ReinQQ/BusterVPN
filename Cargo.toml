@@ -1,0 +1,42 @@
+[workspace]
+members = [
+    "crates/buster-core",
+    "crates/buster-app",
+]
+resolver = "2"
+
+[workspace.package]
+version = "1.4.0"
+edition = "2021"
+authors = ["BusterVPN Team"]
+license = "MIT"
+
+[workspace.dependencies]
+tokio = { version = "1.40", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+url = "2.5"
+base64 = "0.22"
+percent-encoding = "2.3"
+regex = "1.10"
+chrono = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["default-tls", "json", "stream"] }
+windows = "0.58"
+winreg = "0.52"
+sha2 = "0.10"
+libc = "0.2"
+buster-windows = { path = "crates/buster-windows" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

@@ -1,0 +1,736 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'Unbounded';
+  src: url('/fonts/Unbounded-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Unbounded';
+  src: url('/fonts/Unbounded-Regular.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Unbounded';
+  src: url('/fonts/Unbounded-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Unbounded';
+  src: url('/fonts/Unbounded-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/Inter-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --theme-from: #4F46E5;
+  --theme-via: transparent;
+  --theme-to: #6366F1;
+  --accent: #6366F1;
+  --accent-glow: rgba(99, 102, 241, 0.25);
+  --accent-border: rgba(99, 102, 241, 0.4);
+  --accent-rgb: 99 102 241;
+  --accent-sec-rgb: 79 70 229;
+}
+
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+html, body, button, input, select, textarea {
+  font-family: 'Unbounded', system-ui, -apple-system, sans-serif !important;
+}
+
+/* Custom Scrollbar for Obsidian glass theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Glassmorphism utility classes */
+.glass-panel {
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-island {
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card {
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card:hover {
+  background: rgba(0, 0, 0, 0.35);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+/* Pulsing Glow Animation for Connect Button */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.3;
+  }
+  100% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-ring-delayed {
+  0% {
+    transform: scale(0.9);
+    opacity: 0;
+  }
+  30% {
+    transform: scale(1.05);
+    opacity: 0.6;
+  }
+  70% {
+    transform: scale(1.25);
+    opacity: 0.2;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-slow {
+  0%, 100% {
+    opacity: 0.25;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(1.04);
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2.8s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+.animate-pulse-ring-delayed {
+  animation: pulse-ring-delayed 3.2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+  animation-delay: 0.6s;
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 3.5s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   Theme Contrast & Light / Deep Dark Mode Rules
+   ========================================================================== */
+
+/* Independent Central Connect / Power Button (never overridden by theme contrast) */
+.power-toggle-btn.is-connected,
+.power-toggle-btn.is-connected *,
+html.theme-light .power-toggle-btn.is-connected,
+html.theme-light .power-toggle-btn.is-connected * {
+  color: #ffffff !important;
+}
+
+.power-toggle-btn.is-connecting,
+.power-toggle-btn.is-connecting *,
+html.theme-light .power-toggle-btn.is-connecting,
+html.theme-light .power-toggle-btn.is-connecting * {
+  color: #ffffff !important;
+}
+
+.power-toggle-btn.is-disconnected,
+.power-toggle-btn.is-disconnected * {
+  color: #cbd5e1 !important; /* slate-300 */
+}
+
+/* 1. Unicorn Rainbow (True Light Theme) */
+html.theme-light {
+  color-scheme: light;
+}
+
+html.theme-light,
+html.theme-light body,
+html.theme-light .text-white {
+  color: #0f172a !important; /* slate-900 */
+}
+
+html.theme-light .text-white\/95,
+html.theme-light .text-white\/90,
+html.theme-light .text-white\/80 {
+  color: #1e293b !important; /* slate-800 */
+}
+
+html.theme-light .text-white\/70,
+html.theme-light .text-white\/60 {
+  color: #334155 !important; /* slate-700 */
+}
+
+html.theme-light .text-white\/50,
+html.theme-light .text-white\/40,
+html.theme-light .text-white\/30 {
+  color: #475569 !important; /* slate-600 */
+}
+
+/* Central Power / Connect Button in Light Theme */
+html.theme-light .power-toggle-btn.is-disconnected {
+  background: rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border: 2px solid rgba(203, 213, 225, 0.90) !important;
+  box-shadow: 0 15px 35px -5px rgba(0, 0, 0, 0.08), 0 0 20px rgba(255, 255, 255, 0.8) !important;
+}
+
+html.theme-light .power-toggle-btn.is-disconnected:hover {
+  background: rgba(255, 255, 255, 0.95) !important;
+  border-color: rgba(148, 163, 184, 1) !important;
+  box-shadow: 0 20px 40px -5px rgba(0, 0, 0, 0.12), 0 0 25px rgba(255, 255, 255, 0.9) !important;
+}
+
+html.theme-light .power-toggle-btn.is-disconnected svg,
+html.theme-light .power-toggle-btn.is-disconnected .power-icon {
+  stroke: #0f172a !important;
+  color: #0f172a !important;
+}
+
+html.theme-light .power-toggle-btn.is-disconnected .power-title {
+  color: #0f172a !important;
+}
+
+html.theme-light .power-toggle-btn.is-disconnected .power-sub {
+  color: #64748b !important;
+}
+
+html.theme-light .power-ring-idle {
+  border-color: rgba(203, 213, 225, 0.6) !important;
+}
+
+/* Primary colored buttons / badges preserve white typography */
+html.theme-light button.bg-accent,
+html.theme-light button.bg-accent *,
+html.theme-light button[class*="bg-gradient-to-r"],
+html.theme-light button[class*="bg-gradient-to-r"] *,
+html.theme-light button.bg-rose-500,
+html.theme-light button.bg-rose-500 *,
+html.theme-light button.bg-emerald-500,
+html.theme-light button.bg-emerald-500 *,
+html.theme-light button.bg-cyan-500,
+html.theme-light button.bg-cyan-500 * {
+  color: #ffffff !important;
+}
+
+/* Secondary Action Buttons in Light Theme */
+html.theme-light .btn-secondary,
+html.theme-light button.bg-white\/5,
+html.theme-light button.bg-white\/10,
+html.theme-light button.bg-white\/\[0\.04\] {
+  background-color: rgba(255, 255, 255, 0.70) !important;
+  border-color: rgba(203, 213, 225, 0.80) !important;
+  color: #0f172a !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+}
+
+html.theme-light .btn-secondary:hover,
+html.theme-light button.bg-white\/5:hover,
+html.theme-light button.bg-white\/10:hover,
+html.theme-light button.bg-white\/\[0\.04\]:hover {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border-color: rgba(148, 163, 184, 0.90) !important;
+  color: #0f172a !important;
+}
+
+html.theme-light .btn-secondary *,
+html.theme-light button.bg-white\/5 *,
+html.theme-light button.bg-white\/10 *,
+html.theme-light button.bg-white\/\[0\.04\] * {
+  color: #0f172a !important;
+}
+
+/* Theme Selector Buttons in Light Theme */
+html.theme-light .theme-btn {
+  background-color: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(203, 213, 225, 0.70) !important;
+}
+html.theme-light .theme-btn .theme-name {
+  color: #0f172a !important;
+}
+html.theme-light .theme-btn.selected {
+  background-color: #eef2ff !important;
+  border: 2px solid #6366f1 !important;
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.2) !important;
+}
+html.theme-light .theme-btn.selected .theme-name {
+  color: #0f172a !important;
+  font-weight: 700 !important;
+}
+
+/* Server Cards in Light Theme */
+html.theme-light .server-item {
+  background-color: rgba(255, 255, 255, 0.80) !important;
+  border-color: rgba(203, 213, 225, 0.70) !important;
+}
+html.theme-light .server-item .server-title {
+  color: #0f172a !important;
+}
+html.theme-light .server-item .server-host {
+  color: #64748b !important;
+}
+html.theme-light .server-item.selected {
+  background-color: #eef2ff !important;
+  border: 2px solid #6366f1 !important;
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.2) !important;
+}
+html.theme-light .server-item.selected .server-title {
+  color: #0f172a !important;
+  font-weight: 700 !important;
+}
+html.theme-light .server-item.selected .server-host {
+  color: #475569 !important;
+}
+
+/* Routing Mode Cards in Light Theme */
+html.theme-light .routing-mode-card {
+  background-color: rgba(255, 255, 255, 0.80) !important;
+  border-color: rgba(203, 213, 225, 0.70) !important;
+}
+html.theme-light .routing-mode-card .routing-title {
+  color: #0f172a !important;
+  font-weight: 700 !important;
+}
+html.theme-light .routing-mode-card .routing-desc {
+  color: #475569 !important;
+}
+html.theme-light .routing-mode-card.selected {
+  background-color: #eef2ff !important;
+  border: 2px solid #6366f1 !important;
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.2) !important;
+}
+html.theme-light .routing-mode-card.selected .routing-title {
+  color: #0f172a !important;
+}
+html.theme-light .routing-mode-card.selected .routing-desc {
+  color: #334155 !important;
+}
+
+/* Update Banners & Badges in Light Theme */
+html.theme-light .dash-update-banner {
+  background: linear-gradient(to right, rgba(224, 242, 254, 0.9), rgba(240, 249, 255, 0.95)) !important;
+  border-color: rgba(56, 189, 248, 0.7) !important;
+  box-shadow: 0 4px 20px rgba(6, 182, 212, 0.15) !important;
+}
+html.theme-light .dash-update-banner .dash-update-title {
+  color: #0f172a !important;
+}
+html.theme-light .dash-update-banner .dash-update-desc {
+  color: #334155 !important;
+}
+html.theme-light .client-update-box {
+  background: linear-gradient(to right, rgba(224, 242, 254, 0.9), rgba(240, 249, 255, 0.95)) !important;
+  border-color: rgba(56, 189, 248, 0.7) !important;
+}
+html.theme-light .client-update-box .update-box-title {
+  color: #0f172a !important;
+}
+html.theme-light .client-update-box .update-box-desc {
+  color: #334155 !important;
+}
+html.theme-light .client-badge {
+  background-color: #cffafe !important;
+  color: #164e63 !important;
+  border: 1px solid #67e8f9 !important;
+  font-weight: 700 !important;
+}
+
+
+
+/* Toasts in Light Theme (Keep Dark Contrast Card with Pure White Text) */
+html.theme-light .toast-card {
+  background-color: rgba(15, 23, 42, 0.95) !important;
+  border-color: rgba(51, 65, 85, 0.80) !important;
+  box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.35) !important;
+}
+html.theme-light .toast-card .toast-title {
+  color: #ffffff !important;
+}
+html.theme-light .toast-card .toast-msg {
+  color: #f1f5f9 !important;
+}
+html.theme-light .toast-card .toast-close {
+  color: #94a3b8 !important;
+}
+html.theme-light .toast-card .toast-close:hover {
+  color: #ffffff !important;
+}
+
+/* ==========================================================================
+   Standard iOS / Windows Toggle Switch
+   ========================================================================== */
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  height: 1.5rem; /* h-6: 24px */
+  width: 2.75rem; /* w-11: 44px */
+  flex-shrink: 0;
+  align-items: center;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 200ms;
+}
+
+.toggle-switch:focus {
+  outline: none;
+}
+
+.toggle-switch.is-unchecked {
+  background-color: #334155; /* bg-slate-700 */
+}
+
+html.theme-light .toggle-switch.is-unchecked,
+.theme-light .toggle-switch.is-unchecked {
+  background-color: #cbd5e1 !important; /* bg-slate-300 */
+  border: 1px solid rgba(148, 163, 184, 0.4) !important; /* border border-slate-400/40 */
+}
+
+.toggle-switch .toggle-thumb {
+  display: inline-block;
+  height: 1.25rem; /* h-5: 20px */
+  width: 1.25rem; /* w-5: 20px */
+  border-radius: 9999px;
+  background-color: #ffffff !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1); /* shadow-md */
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 200ms;
+  pointer-events: none;
+}
+
+html.theme-light .toggle-switch.is-unchecked .toggle-thumb,
+.theme-light .toggle-switch.is-unchecked .toggle-thumb {
+  background-color: #ffffff !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important; /* shadow-sm */
+}
+
+html.theme-light .toggle-switch.is-checked {
+  border: 1px solid transparent !important;
+}
+
+html.theme-light .toggle-switch.is-checked .toggle-thumb,
+.theme-light .toggle-switch.is-checked .toggle-thumb {
+  background-color: #ffffff !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+}
+
+/* ==========================================================================
+   Logs View Console (Dark & Adaptive Light Terminal)
+   ========================================================================== */
+.logs-terminal {
+  background-color: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.logs-terminal .log-row:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.logs-terminal .log-timestamp {
+  color: #94a3b8; /* text-slate-400 */
+}
+
+.logs-terminal .log-stream {
+  color: #94a3b8; /* text-slate-400 */
+}
+
+.logs-terminal .log-text {
+  color: #f1f5f9; /* text-slate-100 */
+}
+
+.logs-terminal .log-badge.badge-info {
+  color: #34d399; /* text-emerald-400 */
+  background-color: rgba(6, 78, 59, 0.6); /* bg-emerald-950/60 */
+  border: 1px solid rgba(6, 95, 70, 0.5); /* border-emerald-800/50 */
+}
+
+.logs-terminal .log-badge.badge-warn {
+  color: #fcd34d; /* text-amber-300 */
+  background-color: rgba(120, 53, 15, 0.6); /* bg-amber-950/60 */
+  border: 1px solid rgba(146, 64, 14, 0.5); /* border-amber-800/50 */
+}
+
+.logs-terminal .log-badge.badge-error {
+  color: #fb7185; /* text-rose-400 */
+  background-color: rgba(136, 19, 55, 0.6); /* bg-rose-950/60 */
+  border: 1px solid rgba(159, 18, 57, 0.5); /* border-rose-800/50 */
+}
+
+.logs-terminal .log-badge.badge-debug {
+  color: #67e8f9; /* text-cyan-300 */
+  background-color: rgba(22, 78, 99, 0.6); /* bg-cyan-950/60 */
+  border: 1px solid rgba(21, 94, 117, 0.5); /* border-cyan-800/50 */
+}
+
+/* Light Theme Adaptive Logs Card */
+html.theme-light .logs-terminal,
+.theme-light .logs-terminal {
+  background-color: rgba(255, 255, 255, 0.8) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border: 1px solid #cbd5e1 !important; /* border border-slate-300 */
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important; /* shadow-sm */
+  color: #1e293b !important; /* text-slate-800 */
+}
+
+html.theme-light .logs-terminal .logs-empty,
+.theme-light .logs-terminal .logs-empty {
+  color: #64748b !important; /* text-slate-500 */
+  font-size: 0.875rem !important; /* text-sm */
+}
+
+html.theme-light .logs-terminal .log-row:hover,
+.theme-light .logs-terminal .log-row:hover {
+  background-color: rgba(0, 0, 0, 0.04) !important;
+}
+
+html.theme-light .logs-terminal .log-timestamp,
+.theme-light .logs-terminal .log-timestamp {
+  color: #475569 !important; /* text-slate-600 font-mono */
+}
+
+html.theme-light .logs-terminal .log-stream,
+.theme-light .logs-terminal .log-stream {
+  color: #475569 !important; /* text-slate-600 */
+}
+
+html.theme-light .logs-terminal .log-text,
+.theme-light .logs-terminal .log-text {
+  color: #0f172a !important; /* text-slate-900 font-mono */
+}
+
+html.theme-light .logs-terminal .log-badge.badge-info,
+.theme-light .logs-terminal .log-badge.badge-info {
+  background-color: #d1fae5 !important; /* bg-emerald-100 */
+  color: #065f46 !important; /* text-emerald-800 */
+  border: 1px solid #6ee7b7 !important; /* border border-emerald-300 */
+  font-weight: 700 !important; /* font-bold */
+}
+
+html.theme-light .logs-terminal .log-badge.badge-warn,
+.theme-light .logs-terminal .log-badge.badge-warn {
+  background-color: #fef3c7 !important; /* bg-amber-100 */
+  color: #92400e !important; /* text-amber-800 */
+  border: 1px solid #fcd34d !important; /* border border-amber-300 */
+  font-weight: 700 !important; /* font-bold */
+}
+
+html.theme-light .logs-terminal .log-badge.badge-error,
+.theme-light .logs-terminal .log-badge.badge-error {
+  background-color: #ffe4e6 !important; /* bg-rose-100 */
+  color: #9f1239 !important; /* text-rose-800 */
+  border: 1px solid #fda4af !important; /* border border-rose-300 */
+  font-weight: 700 !important; /* font-bold */
+}
+
+html.theme-light .logs-terminal .log-badge.badge-debug,
+.theme-light .logs-terminal .log-badge.badge-debug {
+  background-color: #cffafe !important; /* bg-cyan-100 */
+  color: #155e75 !important; /* text-cyan-800 */
+  border: 1px solid #67e8f9 !important; /* border border-cyan-300 */
+  font-weight: 700 !important; /* font-bold */
+}
+
+/* Modal Dialogs in Light Theme */
+html.theme-light .import-modal-box {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid rgba(203, 213, 225, 0.90) !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25) !important;
+}
+html.theme-light .import-modal-box .import-modal-title {
+  color: #0f172a !important;
+}
+html.theme-light .import-modal-box .import-modal-desc {
+  color: #475569 !important;
+}
+html.theme-light .import-modal-box .import-modal-label {
+  color: #475569 !important;
+}
+html.theme-light .import-modal-box .import-modal-close {
+  color: #64748b !important;
+}
+html.theme-light .import-modal-box .import-modal-close:hover {
+  color: #0f172a !important;
+}
+html.theme-light .import-modal-box .import-modal-tabs {
+  background-color: rgba(0, 0, 0, 0.04) !important;
+  border-color: rgba(203, 213, 225, 0.80) !important;
+}
+html.theme-light .import-modal-box .import-modal-tabs button:not(.bg-accent) {
+  color: #475569 !important;
+}
+html.theme-light .import-modal-box .import-modal-cancel {
+  color: #64748b !important;
+}
+html.theme-light .import-modal-box .import-modal-cancel:hover {
+  color: #0f172a !important;
+}
+
+/* Semi-transparent white frost cards (bg-white/70, border-slate-300/60) */
+html.theme-light .glass-panel,
+html.theme-light .glass-island,
+html.theme-light .glass-card,
+html.theme-light main,
+html.theme-light aside,
+html.theme-light header,
+html.theme-light .bg-black\/30,
+html.theme-light .bg-black\/20,
+html.theme-light .bg-black\/40,
+html.theme-light .bg-black\/60 {
+  background-color: rgba(255, 255, 255, 0.70) !important;
+  border-color: rgba(203, 213, 225, 0.60) !important; /* border-slate-300/60 */
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.03) !important;
+}
+
+html.theme-light .bg-white\/5,
+html.theme-light .bg-white\/10 {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+html.theme-light .border-white\/5,
+html.theme-light .border-white\/10,
+html.theme-light .border-white\/\[0\.08\],
+html.theme-light .border-white\/\[0\.06\] {
+  border-color: rgba(203, 213, 225, 0.60) !important;
+}
+
+html.theme-light input,
+html.theme-light select,
+html.theme-light textarea {
+  background-color: rgba(255, 255, 255, 0.85) !important;
+  border-color: rgba(203, 213, 225, 0.80) !important;
+  color: #0f172a !important;
+}
+
+html.theme-light input::placeholder,
+html.theme-light textarea::placeholder {
+  color: #64748b !important;
+}
+
+html.theme-light .split-chip-bypass {
+  background-color: #ecfdf5 !important;
+  border-color: #a7f3d0 !important;
+  color: #065f46 !important;
+}
+
+html.theme-light .split-chip-proxy {
+  background-color: #faf5ff !important;
+  border-color: #e9d5ff !important;
+  color: #6b21a8 !important;
+}
+
+html.theme-light .hover\:bg-white\/5:hover,
+html.theme-light .hover\:bg-white\/10:hover,
+html.theme-light .hover\:bg-black\/40:hover {
+  background-color: rgba(255, 255, 255, 0.85) !important;
+}
+
+html.theme-light .hover\:border-white\/20:hover {
+  border-color: rgba(148, 163, 184, 0.70) !important;
+}
+
+/* 2. Deep Space (Deep Dark Mode): Absolute deep black #050505 with subtle #434343 radial glow */
+html.theme-deep-space,
+html.theme-deep-space body {
+  background-color: #050505 !important;
+}
+
+html.theme-deep-space .glass-panel,
+html.theme-deep-space .glass-island,
+html.theme-deep-space .glass-card,
+html.theme-deep-space main,
+html.theme-deep-space aside,
+html.theme-deep-space header {
+  background-color: rgba(10, 10, 14, 0.70) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+html.theme-deep-space .bg-black\/30 {
+  background-color: rgba(7, 7, 9, 0.65) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
