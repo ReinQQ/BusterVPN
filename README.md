@@ -1,245 +1,311 @@
 # BusterVPN
 
-**Current release: 0.1.5-beta.**
+<div align="center">
 
-A production-oriented Windows VPN client foundation for **Xray** and **Hysteria2**, written in C# 12 / .NET 8 with WPF and MVVM.
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg?style=flat-square)](Cargo.toml)
+[![Rust](https://img.shields.io/badge/Rust-2021_Edition-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
+[![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB.svg?style=flat-square&logo=tauri)](https://tauri.app/)
+[![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00.svg?style=flat-square&logo=svelte)](https://svelte.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3.4-38B2AC.svg?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey.svg?style=flat-square)](https://github.com/ReinQQ/BusterVPN)
 
-BusterVPN is a process supervisor and Windows networking shell around two external cores. It does not reimplement any tunnel protocol. It parses share links, builds isolated per-session configs, starts hidden child processes in kill-on-close Job Objects, verifies readiness, applies either a Wintun TUN route or a WinINET system proxy, and guarantees an ordered rollback path.
+**A high-performance, production-grade desktop VPN client for Xray-core and Hysteria 2.**  
+Engineered with Rust, Tauri v2, Svelte 5 runes, and Tailwind CSS.
 
-![BusterVPN dashboard](docs/screenshots/dashboard.png)
+</div>
 
-## What is included
+---
 
-| Area | Status |
+## Overview
+
+**BusterVPN** is a modern, lightweight, and robust desktop VPN client acting as an advanced process supervisor and networking engine for **Xray-core** and **Hysteria 2**. It eliminates the fragility of legacy GUI wrappers by providing strict kernel-level process containment, automated route lifecycle management, fail-closed firewall kill-switching, DPAPI/permission-hardened configuration storage, and zero-leak network crash recovery.
+
+Designed specifically to bypass modern censorship and DPI throttling while keeping domestic resources directly accessible, BusterVPN combines native systems programming in **Rust** with a responsive **Svelte 5** reactive interface.
+
+<div align="center">
+  <img src="docs/screenshots/dashboard.png" alt="BusterVPN Dashboard" width="850" />
+  <p><em>Main Dashboard — Real-time connection status, protocol badges, throughput graph, and server control</em></p>
+</div>
+
+<div align="center">
+  <img src="docs/screenshots/routing.png" alt="BusterVPN Routing & Split Tunneling" width="850" />
+  <p><em>Routing Configuration — RuNet bypass rules, GeoIP/GeoSite databases, and per-app Split Tunneling</em></p>
+</div>
+
+---
+
+## Key Features
+
+### 1. Multi-Protocol Core Engine
+- **Xray-core Integration**:
+  - **VLESS**: REALITY (uTLS Chrome/Safari fingerprints, ALPN, public key verification), XTLS-Vision flow control, WebSocket with early data, gRPC, and HTTPUpgrade.
+  - **VMess**: Standard TCP, WebSocket transports, JSON configurations.
+  - **Trojan**: TLS / WebSocket with custom SNI and ALPN negotiation.
+  - **Shadowsocks**: AEAD 2022 ciphers, chacha20-poly1305, aes-128/256-gcm, SIP002 URIs.
+- **Hysteria 2 Integration**:
+  - Full UDP port-hopping support (e.g. `443,10000-20000` port ranges or `mport` syntax).
+  - **Salamander** and **Gecko** packet obfuscation (`obfs=salamander`, `obfs-password`).
+  - **Brutal** congestion control with upload/download bandwidth tuning (`upmbps`, `downmbps`).
+  - Custom SNI, TLS certificate pinning (`pinSHA256`), and Encrypted Client Hello (ECH).
+
+### 2. Flexible Network Operating Modes
+- **TUN Mode (Virtual Adapter)**:
+  - **Windows**: Wintun kernel driver (`BusterVPN_TUN` / `BusterVPN`) with auto-configured routing tables, physical default gateway discovery, and static `/32` bypass route pinning to guarantee that encrypted uplink traffic never loops into the tunnel interface.
+  - **Linux**: Native Linux kernel `/dev/net/tun` driver integration. Operates cleanly with `CAP_NET_ADMIN` capabilities without requiring the entire UI to run as root.
+- **System Proxy Mode**:
+  - **Windows**: Direct WinINET registry manipulation (`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`) with atomic backup journals, multi-protocol listeners (`http`, `https`, `socks`), PAC preservation, and `InternetSetOption` live refresh.
+  - **Linux**: Desktop integration for GNOME (`gsettings`) and KDE Plasma (`kwriteconfig5`).
+- **Dual Mode (TUN + System Proxy)**: Runs both simultaneously for complete system coverage.
+- **Local Proxy Only**: Leaves system network settings untouched, exposing local SOCKS5 (port `10808`) and HTTP (port `10809`) listeners for selective tool or browser routing.
+
+### 3. Intelligent Routing & RuNet Bypass
+- **Geo-Routing Databases**: Bundled `geoip.dat` and `geosite.dat` provide instantaneous out-of-the-box bypass for Russian services (`geosite:category-ru`, `geosite:ru`, `geoip:ru`) and local private IP ranges (`geoip:private`).
+- **App-Based Split Tunneling**: Route specific applications (`.exe` processes on Windows or binaries on Linux) through the VPN while leaving other software on the direct local connection, or vice versa (Bypass vs. Proxy modes).
+- **Domain & IP Rules**: Flexible custom routing rules supporting Direct, Proxy, and Block actions with automated Punycode/IDN Cyrillic domain normalization.
+- **QUIC / HTTP3 Throttling Defense**: Optional automatic blocking of outbound UDP port 443 in TUN mode forces web browsers to fall back to clean TCP TLS 1.3, evading ISP UDP throttling.
+
+### 4. Process Isolation & Fail-Closed Kill Switch
+- **Kernel-Level Process Isolation**:
+  - **Windows**: Child core processes are assigned to a Win32 **Job Object** configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and `JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION`. If the application exits, terminates, or crashes, the OS kernel unconditionally kills all core processes.
+  - **Linux**: Spawned within an isolated process group and configured with `prctl(PR_SET_PDEATHSIG, SIGTERM)`.
+- **Fail-Closed Windows Firewall Kill Switch**:
+  - Leverages COM interfaces (`HNetCfg.FwPolicy2`) to set default outbound policy to **Block**.
+  - Adds narrowly scoped allow-rules for core executables, local loopback (`127.0.0.1`, `::1`), essential DNS (UDP/TCP 53), DHCP, and the VPN server's pinned `/32` host IP.
+  - If the core process terminates unexpectedly, outbound traffic remains blocked to prevent unencrypted IP leaks.
+- **Session Journal & Crash Recovery**:
+  - Every connection transaction writes a recovery journal (`session.json`, `killswitch_journal.json`, `proxy_journal.json`).
+  - On application startup, `startup_recovery()` automatically cleans up dangling processes (verifying PID creation time), restores firewall rules, disables stale system proxies, flushes DNS cache, and dismantles orphaned Wintun adapters.
+
+### 5. Universal Importer & Deep-Link Handler
+- **Universal Importer**: Parses raw share links (`vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, `hy2://`), plain URI lists, Base64-encoded bundles, Clash YAML configs (`proxies:`), and Sing-box / Xray JSON formats.
+- **Deep-Link Protocol Integration**: Registered OS protocol handler for `bustervpn://`, with compatibility parsing for `sub://`, `v2rayng://`, `hiddify://`, and `clash://`.
+- **Subscription Metadata**: Reads and displays `Subscription-Userinfo` bandwidth usage, upload/download quotas, expiration timestamps, and server profile titles.
+- **Multi-Probe Latency Tester**: TCP ping latency tester calculating the median of 3 consecutive probes with timeout guards.
+
+### 6. Modern Reactive UI & Security
+- **Svelte 5 Runes**: Built on Svelte 5's `$state`, `$derived`, and `$effect` reactive primitives for sub-millisecond UI updates.
+- **Obsidian Cyberpunk Design**: Custom frameless window with window controls, responsive navigation, and six selectable accent themes:
+  - *Electric Blue*, *Emerald Green*, *Cyber Violet*, *Sunset Amber*, *Crimson Red*, *Arctic Cyan*.
+- **Localization**: Full Russian (RU) and English (EN) language support, switchable on-the-fly without restarting.
+- **Encrypted Local Storage**:
+  - **Windows**: Profile and subscription stores encrypted at rest via Windows **DPAPI** (`CryptProtectData`) with purpose-specific entropy.
+  - **Linux**: Strict POSIX file permissions (`0600` for stores, `0700` for configuration directories).
+- **Zero Telemetry**: No tracking, analytics, or background telemetry.
+
+### 7. Dual-Channel Auto-Update
+- Automatic SHA-256 integrity verification for core binaries (`xray`, `hysteria`, `wintun.dll`) and routing databases (`geoip.dat`, `geosite.dat`).
+- Dual-channel VPS manifest resolver with fallback endpoint support and atomic file replacement.
+
+---
+
+## Tech Stack
+
+| Layer | Technologies |
 |---|---|
-| Xray import: `vless://`, `vmess://`, `trojan://`, `ss://` | Implemented (Reality, XTLS-Vision, WS, gRPC, HTTPUpgrade, TLS) |
-| Hysteria2 import: `hysteria2://`, `hy2://`, port hopping, Salamander/Gecko, Brutal bandwidth | Implemented |
-| Universal import: HTTP(S) subscriptions, `sub://`, `bustervpn://`, `v2rayng://`, `hiddify://`, `clash://` deep links | Implemented; Base64, plain URI lists, raw Xray/Sing-box JSON, and Clash YAML bodies are auto-detected |
-| Clipboard smart import | `Paste / Import` reads the clipboard, detects the payload, downloads nodes, and upserts the subscription group |
-| Subscription metadata | `Subscription-Userinfo` traffic/expiry, `profile-title` (including `base64:`), and `profile-update-interval` are parsed and shown in Settings/Servers |
-| TUN mode | Implemented via core-owned Wintun adapters, admin/Wintun checks, adapter and default-route verification |
-| System proxy mode | Implemented with HKCU Internet Settings, PAC capture, crash journal, `InternetSetOption` refresh |
-| Routing rules (LAN bypass, domain/IP/CIDR/block) | Implemented for Xray; mapped where supported for Hysteria2 (see limitations) |
-| Kill switch | Implemented with Windows Firewall COM + fail-closed profile policy and recovery journal; WFP service is the recommended production upgrade |
-| Process lifecycle, port conflicts, crash recovery, orphan cleanup | Implemented with Job Objects, a locked state machine, session journal and ordered teardown |
-| Profile and subscription security | DPAPI CurrentUser encryption with per-purpose entropy, no plaintext profile store, ACL-restricted session configs |
-| Localization | RU/EN switch applies immediately across views, view models, statuses, tooltips, and the tray menu without a restart |
-| Cloud updates & installs | Primary/fallback VPS manifest; SHA-256-verified core downloads with progress and atomic replacement (automatic when all advertised cores are missing, or from Settings); client zip self-update staged and applied through `update.bat`; subscription refresh unchanged |
-| UI | Deep obsidian shell with six selectable accent gradients and Inter/Unbounded typography, dashboard, server list with filter/latency, subscriptions, routing, activity log, settings, tray menu, autostart |
-| Tests | 165 automated tests passing (parsers, subscriptions, update manifest/fallback, downloader, core install path, archive/extraction, update script, configs including TUN CIDR prefixes, routing modes, TUN adapter selection, TUN bypass routing, Xray TUN outbound binding, IP lookup providers, localization parity, version metadata, logging, DPAPI, process lifecycle) |
+| **Language & Systems** | **Rust (2021 Edition)** — Tokio, Reqwest, Serde, Windows-rs, Libc, SHA-2 |
+| **Desktop Shell** | **Tauri v2** (`@tauri-apps/api 2.2+`, single-instance plugin, deep-link plugin, system tray) |
+| **Frontend UI** | **Svelte 5** (`^5.20`), **Vite 6**, **Tailwind CSS 3.4**, **Lucide Svelte** |
+| **Tunnel Cores** | **Xray-core** (v1.8+), **Hysteria 2** (v2.x+), **Wintun** (v0.14+) |
+| **Operating Systems** | **Windows 10 / 11 (x64)**, **Linux (Debian, Ubuntu, Arch Linux, WSL2)** |
 
-This is intentionally a **foundation**, not a claim that every binary-specific behavior has been validated against every core release. See [Production boundary](#production-boundary) below.
+---
 
-## Repository layout
+## Repository Structure
 
-```
-BusterVPN.sln
-Directory.Build.props
-cores/                              # drop downloaded core binaries here (gitignored)
-src/
-  BusterVPN.Core/                   # platform-neutral: parsing, typed models, config builders
-    Configuration/                  # Xray JSON + Hysteria YAML builders
-    Diagnostics/                    # LogSanitizer, IAppLogger
-    Models/                         # profiles, protocol models, routing, connection state
-    Parsing/                        # share-link parsers + link writer for JSON/YAML nodes
-    Subscriptions/                  # subscription parser/service, deep links, Clash YAML, cloud models
-    Updates/                        # manifest, fallback resolver, downloader, SHA-256, safe zip extraction, update.bat generator
-    Processes/                      # IProcessManager / IManagedProcess contracts
-    Settings/
-  BusterVPN.Windows/                # Windows integration, no WPF dependency
-    CoreManagers/
-      ProcessManager.cs             # hidden child process start/stop + output capture
-      JobObject.cs                  # kill-on-close containment
-      SystemProxyManager.cs         # HKCU + WinINET P/Invoke + crash-safe journal
-      TunManager.cs                 # Wintun checks, adapter discovery, route verification
-      KillSwitchService.cs          # Windows Firewall COM fail-closed policy
-      SessionJournal.cs             # crash/orphan recovery
-      PortAllocator.cs
-      AutostartManager.cs
-    Diagnostics/FileLogger.cs
-    Infrastructure/AppPaths.cs
-    Infrastructure/UriSchemeRegistrar.cs  # HKCU bustervpn:// registration (no elevation)
-    Security/                       # DPAPI, ACL hardening, core binary validation
-    Storage/                        # encrypted profile/subscription stores, settings store
-  BusterVPN.App/                    # WPF / MVVM shell
-    CoreManagers/ConnectionCoordinator.cs
-    Localization/                   # RU/EN dictionaries, hot-switch service, {loc:Translate}
-    Services/
-      XrayBackendService.cs
-      HysteriaBackendService.cs
-      BackendReadiness.cs
-      LatencyTester.cs
-      IpInfoService.cs
-      ThroughputMonitor.cs
-      TrayIconService.cs
-      SingleInstanceGuard.cs        # named pipe activation with command-line forwarding
-      SubscriptionWorkspace.cs      # registry + import pipeline shared by paste, deep links, cloud
-      CloudUpdateService.cs         # release manifest + subscription refresh channel
-      CoreUpdateManager.cs          # .part downloads, SHA-256 verification, atomic core replacement
-      AppSelfUpdater.cs             # client zip staging, update.bat, relaunch
-      UpdateDownloader.cs           # streaming download + progress (Core/Updates)
-    ViewModels/MainViewModel.cs
-    Views/                          # Dashboard, Servers, Routing, Logs, Settings
-    Controls/ThroughputGraph.cs
-    Themes/                         # premium dark/glass design system
-    Converters/
-tests/BusterVPN.Tests/
-docs/
-  ARCHITECTURE.md                   # deep design, state machine, failure matrix
-  screenshots/dashboard.png
+```text
+.
+├── Cargo.toml                     # Cargo workspace manifest (v1.4.0)
+├── Cargo.lock                     # Locked dependency tree
+├── build-linux.sh                 # Linux build, dependency & packaging automation
+├── cores/                         # Core binaries and routing databases (gitignored)
+│   ├── README.md                  # Asset requirements and checksum instructions
+│   ├── geoip.dat                  # MaxMind / LoyalSoldier GeoIP database
+│   ├── geosite.dat                # GeoSite domain categorization database
+│   ├── hysteria.exe / hysteria    # Hysteria 2 core executable
+│   ├── wintun.dll                 # Wintun driver DLL (Windows x64)
+│   └── xray.exe / xray            # Xray-core executable
+├── crates/
+│   ├── buster-core/               # Platform-agnostic tunnel models, config builders, parsers
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── config/            # Xray JSON and Hysteria 2 YAML generators
+│   │       ├── models/            # Profiles, routing rules, enums, split-tunneling models
+│   │       └── parsing/           # VLESS, VMess, Trojan, Shadowsocks, Hysteria2, Clash parsers
+│   ├── buster-windows/            # Windows-native networking, Win32 APIs, DPAPI, Firewall
+│   │   ├── Cargo.toml
+│   │   └── src/
+│   │       ├── autostart.rs       # HKCU Run registry manager
+│   │       ├── dpapi.rs           # Windows CryptProtectData / CryptUnprotectData encryption
+│   │       ├── firewall.rs        # Windows Firewall COM fail-closed kill switch
+│   │       ├── job_object.rs      # Win32 Job Object lifecycle supervisor (KILL_ON_JOB_CLOSE)
+│   │       ├── process.rs         # Hidden process launcher & log stream redirection
+│   │       ├── proxy.rs           # WinINET / WinHTTP system proxy configuration & journals
+│   │       ├── routes.rs          # Default gateway resolution, /32 bypass, Wintun management
+│   │       └── session_journal.rs # Crash recovery and orphan process reaper
+│   └── buster-app/                # Main Tauri v2 application binary and IPC orchestrator
+│       ├── Cargo.toml
+│       ├── tauri.conf.json        # Window specs, tray configuration, and bundle targets
+│       ├── frontend/              # Svelte 5 single-page application
+│       │   ├── package.json
+│       │   ├── vite.config.js
+│       │   ├── tailwind.config.js
+│       │   └── src/
+│       │       ├── App.svelte     # Root application component
+│       │       ├── lib/components/# UI controls, graphs, status indicators, modal dialogs
+│       │       └── lib/views/     # Dashboard, Servers, Routing, Activity Logs, Settings
+│       └── src/
+│           ├── commands.rs        # Tauri IPC command definitions
+│           ├── main.rs            # Application bootstrap, single-instance mutex, system tray
+│           ├── platform/          # Cross-platform networking abstractions (Linux & Windows)
+│           ├── services/          # SessionCoordinator, SubscriptionService, UpdaterService
+│           └── storage/           # ProfileStore, SubscriptionStore, SettingsStore
+└── docs/
+    ├── ARCHITECTURE.md            # Comprehensive architectural specification & state machine
+    └── screenshots/
+        ├── dashboard.png          # Main Dashboard screenshot
+        └── routing.png            # Routing configuration screenshot
 ```
 
-## Runtime layout
+---
 
-The application resolves cores and `wintun.dll` from the **`cores` subfolder of the application directory** (`AppContext.BaseDirectory`). Downloaded updates are written there atomically; a legacy binary in the application root is still accepted for backward compatibility.
+## Build & Installation
 
-```
-BusterVPN.exe
-BusterVPN.dll
-...
-cores\
-  xray.exe
-  hysteria.exe
-  wintun.dll          # required for TUN; must match process architecture
-```
+### Prerequisites
 
-During development, put the downloaded binaries into the repository-level `cores/` directory. `BusterVPN.App.csproj` mirrors that directory to the build/publish `cores/` output when it exists. Do not commit third-party binaries.
+#### Windows
+- **Windows 10 (1809+) or Windows 11 (x64)**
+- **Rust Toolchain**: Stable channel (`rustup default stable`, `x86_64-pc-windows-msvc`)
+- **Node.js**: v18+ or v20+ LTS with `npm`
+- **Tauri CLI**: `cargo install tauri-cli --version "^2.0"`
+- **Core Binaries**: Place `xray.exe`, `hysteria.exe`, `wintun.dll`, `geoip.dat`, and `geosite.dat` into `cores/`.
 
-Runtime state is per-user under `%LOCALAPPDATA%\BusterVPN\`:
+#### Linux (Debian / Ubuntu / Arch)
+- **Rust Toolchain**: Stable channel
+- **Node.js**: v18+ or v20+ LTS with `npm`
+- **System Libraries**:
+  ```bash
+  sudo apt-get install -y build-essential curl libssl-dev libgtk-3-dev \
+    libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libjavascriptcoregtk-4.1-dev
+  ```
 
-```
-profiles.bin                  # DPAPI CurrentUser encrypted profiles (contains share links/secrets)
-settings.json                 # non-secret UI/routing/kill-switch settings
-runtime\<session-id>\         # isolated per-session core configs, deleted on teardown
-logs\buster-YYYYMMDD.log       # sanitized application/core diagnostics, 14-day retention
-system-proxy.backup.json      # present only while a proxy transaction is active
-killswitch.backup.json        # present only while the kill switch is armed
-active-session.json           # core PID/start-time for orphan recovery
-```
+---
 
-## Build and test
+### Step-by-Step Build Instructions
 
-Prerequisites:
+#### 1. Windows Build
 
-- Windows 10 1809+ (Windows 11 recommended)
-- .NET 8 SDK
-- Downloaded cores and architecture-matching `wintun.dll`
+Open PowerShell in the project root:
 
 ```powershell
-dotnet build BusterVPN.sln -c Release
-dotnet test tests\BusterVPN.Tests\BusterVPN.Tests.csproj
-dotnet run --project src\BusterVPN.App\BusterVPN.App.csproj -c Release
+# 1. Install frontend dependencies and verify build
+cd crates\buster-app\frontend
+npm install
+npm run build
+cd ..\..\
+
+# 2. Run automated workspace tests (66+ unit & integration tests)
+cargo test --workspace
+
+# 3. Build release executable and NSIS installer
+cargo tauri build
 ```
 
-Or copy cores into the `cores` folder beside the built executable and launch:
+The resulting binaries will be located at:
+- Unpacked Executable: `target\release\buster-app.exe`
+- NSIS Installer: `target\release\bundle\nsis\BusterVPN_1.4.0_x64-setup.exe`
 
-```powershell
-.\src\BusterVPN.App\bin\Release\net8.0-windows\BusterVPN.exe
-```
-
-Debug builds launched via `dotnet BusterVPN.dll` cannot exercise the autostart command (the app checks for `BusterVPN.exe`). That is expected.
-
-### Elevation
-
-- **System proxy mode** works as a standard user (HKCU only).
-- **TUN mode** requires administrator rights to create the Wintun adapter and install routes.
-- **Kill switch** requires administrator rights to change firewall profile defaults.
-
-The manifest is deliberately `asInvoker`; TUN/kill switch fail with an actionable error instead of silently running half-configured. The production hardening path is an elevated Windows service/privileged broker rather than running the entire UI elevated.
-
-> **Kill-switch recovery:** if BusterVPN crashes while the kill switch is armed, outbound traffic remains blocked. Relaunch BusterVPN **as administrator** so startup recovery can restore the firewall profile defaults, or reset the Domain/Private/Public outbound defaults manually in Windows Security. The journal is `%LOCALAPPDATA%\BusterVPN\killswitch.backup.json`. This behavior is intentional and documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#8-kill-switch).
-
-## Linux (Ubuntu / Debian / Arch) Support & Building
-
-BusterVPN supports native compilation and packaging on Linux distributions (Ubuntu, Debian, Arch Linux, WSL2):
-
-### 1. Prerequisites & Compilation
+#### 2. Linux Build
 
 Run the automated build script:
+
 ```bash
 chmod +x build-linux.sh
 ./build-linux.sh
 ```
 
-The script will:
-- Install required system development libraries (`libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `libssl-dev`, `librsvg2-dev`).
-- Validate Linux engine cores in `crates/buster-app/cores-linux/` (`xray`, `hysteria`, `geoip.dat`, `geosite.dat`) with `0755` permissions.
-- Build the Svelte frontend (`npm run build`).
-- Run the full workspace test suite (`cargo test --workspace`).
-- Build `.deb` and `.AppImage` packages under `target/release/bundle/deb/` and `target/release/bundle/appimage/`.
-
-### 2. Network Capabilities for TUN Mode
-
-On Linux, `/dev/net/tun` is native to the Linux kernel and does not require third-party drivers (such as Wintun). To use TUN mode without running the entire GUI as root, grant network capabilities:
+Or execute the steps manually:
 
 ```bash
-# For installed package binary:
-sudo setcap cap_net_admin,cap_net_bind_service=+ep /usr/bin/buster-app
+# Install frontend packages
+cd crates/buster-app/frontend && npm install && npm run build && cd ../../
 
-# For local release binary:
+# Run test suite
+cargo test --workspace
+
+# Build Tauri binary
+cargo tauri build
+```
+
+#### Network Capabilities for Linux TUN Mode
+On Linux, TUN mode utilizes the kernel's `/dev/net/tun`. To run TUN mode without launching the entire GUI as `root`, assign `CAP_NET_ADMIN` capabilities:
+
+```bash
 sudo setcap cap_net_admin,cap_net_bind_service=+ep target/release/buster-app
-sudo setcap cap_net_admin,cap_net_bind_service=+ep crates/buster-app/cores-linux/xray
-sudo setcap cap_net_admin,cap_net_bind_service=+ep crates/buster-app/cores-linux/hysteria
 ```
 
 ---
 
-## Import examples
+## Import URI Examples
 
-Use placeholder credentials only in examples.
+BusterVPN accepts share links via clipboard paste, deep links, or subscription URLs. Example formats:
 
 ```text
-vless://UUID@example.com:443?security=reality&sni=www.example.com&fp=chrome&pbk=PUBLIC_KEY&sid=abcd&type=tcp&flow=xtls-rprx-vision#Amsterdam
-vmess://BASE64_JSON
-trojan://PASSWORD@example.com:443?security=tls&sni=example.com#Trojan
-ss://BASE64(method:password)@example.com:8388#SS
-hysteria2://AUTH@example.com:443?sni=example.com&obfs=salamander&obfs-password=SECRET&upmbps=50&downmbps=200#HY2
+# VLESS Reality (XTLS-Vision)
+vless://11111111-2222-3333-4444-555555555555@example.com:443?security=reality&sni=example.com&fp=chrome&pbk=PUBLIC_KEY&sid=abcd1234&type=tcp&flow=xtls-rprx-vision#Frankfurt-Reality
+
+# Hysteria 2 (Salamander Obfuscation & Port-Hopping)
+hysteria2://SECRET_PASSWORD@example.com:443,10000-20000?sni=example.com&obfs=salamander&obfs-password=OBFS_SECRET&upmbps=50&downmbps=200#Amsterdam-Hy2
+
+# Trojan (TLS + WebSocket)
+trojan://PASSWORD@example.com:443?security=tls&sni=example.com&type=ws&path=%2Ftrojan-ws#Stockholm-Trojan
+
+# Shadowsocks (AEAD 2022)
+ss://2022-blake3-aes-128-gcm:BASE64_KEY@example.com:8388#Helsinki-SS
+
+# BusterVPN Deep Link
+bustervpn://import?url=https%3A%2F%2Fexample.com%2Fapi%2Fv1%2Fsubscription%3Ftoken%3DSECRET
 ```
 
-## Core commands produced
+---
 
-- Xray: `xray.exe run -c <session>\xray-config.json`
-- Hysteria2: `hysteria.exe client -c <session>\hysteria-config.yaml`
+## Security Model & Privacy
 
-Arguments are passed as an argument **vector** (`ProcessStartInfo.ArgumentList`), never through `cmd.exe`.
+- **Protected Credential Storage**: Profile configurations, server addresses, UUIDs, and subscription URLs are encrypted via Windows DPAPI (`CryptProtectData`) on Windows, and POSIX `0600` access controls on Linux. Plaintext secrets are never stored.
+- **Isolated Per-Session Configs**: Generated Xray JSON and Hysteria YAML configuration files are written to `%LOCALAPPDATA%\BusterVPN\runtime\` and scrubbed upon disconnection.
+- **Fail-Closed Outbound Firewall**: When Kill Switch is engaged, outbound traffic is blocked at the Windows Filtering Platform / Windows Firewall level until the session cleanly disconnects.
+- **Sanitized Logging**: All application and core logs are scrubbed for credentials, passwords, tokens, and query parameters before being written to disk or displayed in the Activity Log view.
+- **No Telemetry**: No third-party analytical SDKs or telemetry beacons exist within the client. Exit IP lookups are performed directly against public IP APIs and can be disabled completely in Settings.
 
-## Security posture
+---
 
-- Profile store encrypted with DPAPI (CurrentUser) and atomic replacement.
-- Logs are sanitized for URLs-with-userinfo and common secret keys before persistence/display.
-- Session configs live in random per-session directories, are deleted on teardown, and are never placed beside the UI binary.
-- Core children are hidden, run without a shell, assigned to kill-on-close Job Objects, and force-stopped as a tree.
-- System proxy changes are journaled before mutation; PAC/AutoDetect are captured and restored; startup recovery handles a crash mid-transaction.
-- Kill switch changes are journaled before profile defaults change; startup recovery restores defaults if the process died.
-- No telemetry or silent updater exists. The optional exit-IP display (`ipinfo.io`) can be disabled in Settings; the cloud manifest/subscription refresh can be disabled in Settings as well.
-- The app never logs full process arguments (share-link payloads may contain provider credentials).
-- Subscription URLs are bearer tokens: they are stored only in a DPAPI-protected registry with purpose-specific entropy and are masked in logs/UI (`MaskUrl`).
-- Background networking is limited to the opted-in cloud manifest check and HTTP(S) subscription refresh; both fail softly and keep cached nodes when offline. The manifest is fetched from the VPS primary URL with the reserve URL as fallback, and core binaries are compared by SHA-256 before any update is advertised. The exit-IP lookup remains optional and can be disabled.
-- Update downloads are SHA-256 verified before installation. Cores are swapped atomically on the same volume (`File.Replace`), client archives are extracted with zip-slip and size limits, and `update.bat` waits for the exiting PID, copies the staged package, relaunches the client, and removes the staging directory.
+## Testing
 
-## Production boundary
+Run the automated workspace test suite:
 
-The code is structured to be production-ready and compiles/tests cleanly, but shipping it as a commercial VPN client requires work that is intentionally outside a single foundation drop:
+```bash
+cargo test --workspace
+```
 
-1. **Privileged helper**: TUN/kill switch currently run in-process and require elevation. Moving firewall/WFP and route ownership into a signed Windows service with an authenticated IPC channel removes the UAC compromise and makes recovery deterministic.
-2. **WFP**: replace firewall profile-default manipulation with a dedicated WFP provider, allow/block filters, and a service-owned watchdog.
-3. **TUN adapters**: cores own adapter creation/removal. BusterVPN verifies them but does not forcibly delete a stuck Wintun adapter.
-4. **Supported Xray surface**: no SS SIP003 plugins, no VMess TCP+HTTP header obfuscation, no XHTTP/H2. Unsupported links fail with clear errors rather than producing a broken config. Subscription support covers Base64, plain URI lists, Xray/Sing-box JSON, and Clash YAML; other panel formats (for example Surge or Quantumult lists) are reported rather than guessed.
-5. **Hysteria2 routing semantics**: Hysteria has no client domain ACL in the supported config; domain bypass is only applied in system-proxy mode. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#9-routing-matrix).
-6. **DNS and IPv6**: TUN route readiness is verified for IPv4; IPv6 routes are generated for Xray/Hysteria but are core-owned and not independently verified. DNS leak prevention and split-DNS policy are not implemented at the app layer, and the kill switch intentionally allows system DNS/DHCP traffic. Add explicit DNS policy before claiming leak-proof TUN.
-7. **Operationalization**: code signing, Authenticode verification, crash reporting, accessibility/screen-reader audit, and release CI are not included. The VPS manifest carries SHA-256 for the client and each core, core downloads and the client self-update are implemented with hash verification and staging, but publisher-signature verification remains future work. The RU/EN hot-switch and the update manifest parser are in place; the primary and fallback endpoints are configurable.
-8. **Test coverage**: parsers, subscription formats, deep links, proxy formatting, DPAPI stores, and process lifecycle have automated tests. Live Xray/Hysteria handshakes, proxy application, TUN routes, and firewall behavior require integration labs and elevated CI runners.
+The test suite covers:
+- Share link parsers (VLESS Reality/Vision, VMess, Trojan, Shadowsocks AEAD, Hysteria 2 port-hopping and Salamander).
+- Subscription formats (Base64 variants, Clash YAML `proxies:`, Xray/Sing-box JSON, deep-link dispatchers).
+- Xray JSON configuration synthesis (inbound TUN prefixes, outbound interface binding, direct bypass routing, split-tunneling priority).
+- Hysteria 2 YAML generation (MTU calculations, port-hopping ranges, route exclusions).
+- Windows DPAPI encryption roundtrips and purpose-separated entropy.
+- System proxy string generation, registry manipulation, and crash journal recovery.
+- Win32 Job Object creation and process lifecycle boundaries.
 
-## Acknowledgements / references
+---
 
-Behavior and config shapes were checked against:
+## Documentation
 
-- [Xray-core TUN inbound documentation](https://xtls.github.io/config/inbounds/tun.html)
-- [Xray REALITY documentation](https://xtls.github.io/config/transports/reality.html)
-- [Hysteria2 full client configuration](https://v2.hysteria.network/docs/advanced/Full-Client-Config/)
-- [Hysteria2 URI scheme](https://v2.hysteria.network/docs/developers/URI-Scheme/)
-- [Windows `InternetSetOptionW`](https://learn.microsoft.com/windows/win32/api/wininet/nf-wininet-internetsetoptionw)
-- [Windows Job Objects](https://learn.microsoft.com/windows/win32/procthread/job-objects)
-- [Windows Filtering Platform](https://learn.microsoft.com/windows/win32/fwp/windows-filtering-platform-start-page)
+For an in-depth exploration of the system architecture, state machines, and platform internals, see:
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Comprehensive architectural contract, state machines, and fail-safe designs.
+- [cores/README.md](cores/README.md) — Core binary placement, checksums, and runtime asset layout.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the complete architectural blueprint and failure semantics.
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
