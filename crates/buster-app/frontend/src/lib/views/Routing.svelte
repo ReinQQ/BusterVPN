@@ -4,6 +4,7 @@
   import { t } from '../stores/locale.svelte.js';
   import { api } from '../api.js';
   import Toggle from '../components/Toggle.svelte';
+  import ServiceIcon from '../components/ServiceIcon.svelte';
   import { Network, Globe, Plus, Trash2, Split, AppWindow, X, FolderOpen } from 'lucide-svelte';
 
   let newRuleValue = $state('');
@@ -285,10 +286,11 @@
                   type="button"
                   onclick={() => handleAddBypassApp(preset.exe)}
                   disabled={isAdded}
-                  class="px-2 py-1 rounded-lg text-[11px] font-mono border transition-all flex items-center gap-1 {isAdded
+                  class="px-2 py-1 rounded-lg text-[11px] font-mono border transition-all flex items-center gap-1.5 {isAdded
                     ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300 opacity-60 cursor-default'
                     : 'border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-emerald-500/30'}"
                 >
+                  <ServiceIcon name={preset.exe} size={13} />
                   <span>{preset.label}</span>
                 </button>
               {/each}
@@ -313,7 +315,7 @@
                 {#each vpnStore.settings.split_tunneling.bypass_apps as app (app)}
                   <div class="split-chip-bypass px-2 py-1 rounded-lg bg-emerald-950/30 border border-emerald-500/25 flex items-center gap-1.5 text-[11px] font-mono text-emerald-200">
                     <span class="text-[9px] font-bold text-emerald-400">[Прямо]</span>
-                    <AppWindow class="w-3 h-3 text-emerald-400" />
+                    <ServiceIcon name={app} size={13} />
                     <span class="truncate max-w-[100px]">{app}</span>
                     <button
                       type="button"
@@ -357,10 +359,11 @@
                   type="button"
                   onclick={() => handleAddProxyApp(preset.exe)}
                   disabled={isAdded}
-                  class="px-2 py-1 rounded-lg text-[11px] font-mono border transition-all flex items-center gap-1 {isAdded
+                  class="px-2 py-1 rounded-lg text-[11px] font-mono border transition-all flex items-center gap-1.5 {isAdded
                     ? 'border-purple-500/40 bg-purple-500/15 text-purple-300 opacity-60 cursor-default'
                     : 'border-white/10 bg-white/5 text-white/70 hover:text-white hover:border-purple-500/30'}"
                 >
+                  <ServiceIcon name={preset.exe} size={13} />
                   <span>{preset.label}</span>
                 </button>
               {/each}
@@ -385,7 +388,7 @@
                 {#each vpnStore.settings.split_tunneling.proxy_apps as app (app)}
                   <div class="split-chip-proxy px-2 py-1 rounded-lg bg-purple-950/30 border border-purple-500/25 flex items-center gap-1.5 text-[11px] font-mono text-purple-200">
                     <span class="text-[9px] font-bold text-purple-400">[VPN]</span>
-                    <AppWindow class="w-3 h-3 text-purple-400" />
+                    <ServiceIcon name={app} size={13} />
                     <span class="truncate max-w-[100px]">{app}</span>
                     <button
                       type="button"
@@ -454,7 +457,8 @@
       {:else}
         {#each vpnStore.settings.routing_rules as rule (rule.id)}
           <div class="rounded-xl p-2.5 px-3 bg-white/[0.02] border border-white/[0.06] flex items-center justify-between text-xs transition-all duration-200 transform-gpu hover:border-white/15 hover:bg-white/[0.05]">
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2.5">
+              <ServiceIcon name={rule.value} size={15} />
               <span
                 class="uppercase text-[9px] font-mono px-2 py-0.5 rounded font-semibold {rule.action === 'direct'
                   ? 'bg-emerald-500/20 text-emerald-400'

@@ -1,383 +1,201 @@
-# BusterVPN Architecture
+# BusterVPN Architecture Specification
 
-This document defines the architectural contract, subsystem boundaries, connection state machine, process supervision model, and network recovery mechanisms of **BusterVPN** (v1.4.0).
-
----
-
-## 1. System Goals and Principles
-
-BusterVPN is a high-performance desktop process supervisor and networking engine for external VPN cores (**Xray-core** and **Hysteria 2**). It does not reimplement tunnel cryptographic protocols; instead, it provides native platform orchestration, kernel-level process containment, robust route pinning, fail-closed firewall kill-switching, and leak-proof crash recovery.
-
-### Core Architectural Principles:
-1. **Zero-Overhead Native Engine**: Implemented in **Rust (2021 edition)** with **Tauri v2**, providing near-instant startup, tiny memory footprint (< 40 MB idle), and compile-time safety.
-2. **Complete Process Containment**: Subordinate VPN cores must never survive an abnormal termination of the host GUI. Windows uses Win32 **Job Objects** (`KILL_ON_JOB_CLOSE`); Linux uses process groups with `prctl(PR_SET_PDEATHSIG)`.
-3. **Deterministic Network Side Effects**: Every change to routing tables, virtual adapters, firewall filters, or system proxies is backed by an atomic on-disk journal with automated startup recovery.
-4. **Zero-Leak Protection**: Fail-closed firewall rules, physical default gateway host route pinning (`/32`), and strict teardown sequencing ensure plaintext traffic never escapes unencrypted.
-5. **Secure Credential Isolation**: Server profiles and subscription URLs are encrypted at rest using platform-native cryptography (Windows DPAPI with entropy / Linux POSIX `0600`).
-6. **Reactive Desktop Interface**: Modern UI built with **Svelte 5 runes** (`$state`, `$derived`, `$effect`), communicating asynchronously via Tauri IPC.
+This document defines the architectural contract, subsystem boundaries, IPC communication protocols, process supervision model, and network recovery mechanisms of **BusterVPN v1.5.0**.
 
 ---
 
-## 2. Crate & Layer Map
+## 1. System Design Principles
 
-The BusterVPN codebase is partitioned into three specialized Rust crates and a reactive web frontend:
+BusterVPN functions as a privileged networking engine and process supervisor for third-party VPN cores (**Sing-box**, **Xray-core**, and **Hysteria 2**). The architecture adheres to five engineering constraints:
+
+1. **Privilege Separation**: Unprivileged user interface processes must never require administrative elevation (UAC prompts) for regular desktop operation. All privileged operations (Wintun adapter creation, IP route table modifications, Windows Filtering Platform firewall rules) reside in a dedicated background Windows Service.
+2. **Deterministic Process Containment**: Network cores must never survive abnormal termination of the host process or system crash. Process isolation is enforced via Win32 **Job Objects** configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
+3. **Fail-Closed Network Safety**: Outbound network traffic is protected by default-block Windows Firewall policies during tunnel activation, with strictly scoped whitelist rules for local loopback, local subnet DHCP/DNS, and pinned `/32` server IP destinations.
+4. **Zero Route Looping**: The physical default gateway is identified prior to tunnel creation; a `/32` static host route is pinned to the physical interface so that encrypted uplink packets never route into the virtual Wintun TUN adapter.
+5. **Encrypted Storage at Rest**: Profile credentials, private keys, and subscription links are encrypted using Windows **DPAPI** (`CryptProtectData`) with purpose-bound entropy strings.
+
+---
+
+## 2. Subsystem Architecture & Component Map
+
+The workspace contains five Rust crates and a Svelte 5 frontend:
 
 ```mermaid
 flowchart TB
-    subgraph Frontend ["Frontend (Svelte 5 + Tailwind CSS)"]
-        UI["Svelte 5 Runes App<br/>(Dashboard, Servers, Routing, Logs, Settings)"]
-    end
-
-    subgraph IPC ["Tauri v2 IPC Layer"]
-        CMD["commands.rs<br/>(Tauri Commands & State Handlers)"]
-        APPSTATE["AppState<br/>(Arc-wrapped Services & Stores)"]
-    end
-
-    subgraph AppServices ["crates/buster-app (Application & Services)"]
-        COORD["SessionCoordinator<br/>(State Machine, Watchdog, NetMonitor)"]
-        SUB_SVC["SubscriptionService"]
-        UPDATER["UpdaterService<br/>(Core SHA-256 & Manifest Sync)"]
-        LAT_SVC["LatencyService"]
-        IP_SVC["IpInfoService"]
-        PROFILES["ProfileStore<br/>(DPAPI / 0600)"]
-        SETTINGS["SettingsStore"]
-    end
-
-    subgraph CoreLogic ["crates/buster-core (Platform-Agnostic)"]
-        PARSERS["Parsing Module<br/>(VLESS, VMess, Trojan, SS, Hy2, Clash)"]
-        CONFIGS["Config Builders<br/>(Xray JSON & Hysteria YAML)"]
-        MODELS["Data Models<br/>(Profiles, RoutingRules, Enums)"]
-    end
-
-    subgraph PlatformLayer ["Platform Native Subsystems"]
-        subgraph WinSubsystem ["crates/buster-windows (Windows Only)"]
-            JOBOBJ["SafeJobObject<br/>(KILL_ON_JOB_CLOSE)"]
-            WINPROC["CoreProcessManager<br/>(Hidden Proc, Log Pipes)"]
-            WINPROXY["SystemProxyManager<br/>(WinINET Registry & Refresh)"]
-            WINFW["FirewallKillSwitch<br/>(COM HNetCfg.FwPolicy2)"]
-            WINROUTES["Routes & Wintun<br/>(Gateway, /32 Pinning, DNS)"]
-            JOURNAL["SessionJournal<br/>(PID & Crash Recovery)"]
-            NETMON["NetworkMonitor<br/>(Gateway Switch Listener)"]
+    subgraph UserSpace ["User Session (Standard User / asInvoker)"]
+        subgraph GUI ["crates/buster-app (Tauri v2 + Svelte 5)"]
+            UI["Svelte 5 Runes View Layer<br/>(Dashboard, Servers, Routing, Settings, Logs)"]
+            CMD["Tauri IPC Commands<br/>(commands.rs)"]
+            APP_COORD["SessionCoordinator<br/>(Service Client Delegate & Local Fallback)"]
+            PROXY_MGR["SystemProxyManager<br/>(HKCU WinINET Registry)"]
+            STORES["Storage Layer<br/>(ProfileStore, SettingsStore, DPAPI)"]
         end
 
-        subgraph LinuxSubsystem ["crates/buster-app/src/platform/linux.rs"]
-            LNXPROC["CoreProcessManager<br/>(Process Group + PR_SET_PDEATHSIG)"]
-            LNXPROXY["SystemProxyManager<br/>(GNOME / KDE Plasma)"]
-            LNXROUTES["Linux Routes & TUN<br/>(/dev/net/tun + ip route)"]
+        subgraph CLI ["crates/buster-ctl (busterctl.exe)"]
+            CLI_CMD["CLI Subcommands<br/>(status, connect, disconnect, logs, service)"]
         end
     end
 
-    subgraph Cores ["External Tunnel Cores"]
-        XRAY["Xray-core<br/>(VLESS Reality / Vision, VMess, Trojan, SS)"]
-        HY2["Hysteria 2<br/>(Port Hopping, Salamander, Brutal)"]
-        WINTUN["Wintun Driver<br/>(Windows Kernel TUN)"]
+    subgraph ServiceSpace ["System Session (LocalSystem / SERVICE_WIN32_OWN_PROCESS)"]
+        subgraph Service ["crates/buster-service (buster-service.exe)"]
+            PIPE_SRV["Named Pipe IPC Server<br/>(\\\\.\\pipe\\BusterVPNService)"]
+            SVC_CTX["ServiceContext & Dispatcher"]
+            BOOT_CONN["Boot Auto-Connect Engine"]
+        end
+
+        subgraph WinSubsystem ["crates/buster-windows (Privileged Infrastructure)"]
+            JOB["SafeJobObject<br/>(KILL_ON_JOB_CLOSE)"]
+            PROC["CoreProcessManager<br/>(Stdio Pipe Redirection)"]
+            FW["FirewallKillSwitch<br/>(COM INetFwPolicy2 Fail-Closed)"]
+            ROUTES["RouteManager<br/>(Wintun TUN, Gateway Discovery, /32 Pinning)"]
+            SCM["WindowsServiceManager<br/>(Win32 SCM API)"]
+        end
+    end
+
+    subgraph CoreSpace ["crates/buster-core (Agnostic Models & Parsers)"]
+        PARSERS["Protocol Parsers<br/>(VLESS, Hysteria2, TUIC, WireGuard, ShadowTLS, Trojan, VMess, SS)"]
+        BUILDERS["Config Generators<br/>(Singbox JSON, Xray JSON, Hysteria YAML)"]
+        MODELS["Data Models & Enums"]
+    end
+
+    subgraph Cores ["External Core Executables"]
+        SINGBOX["sing-box.exe<br/>(.srs Rule-Sets, TUIC, WireGuard, Reality)"]
+        XRAY["xray.exe<br/>(VLESS Reality / Vision, Trojan, VMess)"]
+        HY2["hysteria.exe<br/>(UDP Port Hopping, Salamander Obfs)"]
+        WINTUN["wintun.dll<br/>(Kernel-Mode TUN Driver)"]
     end
 
     UI <--> CMD
-    CMD <--> APPSTATE
-    APPSTATE --> COORD
-    APPSTATE --> SUB_SVC
-    APPSTATE --> UPDATER
-    APPSTATE --> PROFILES
-    APPSTATE --> SETTINGS
+    CMD <--> APP_COORD
+    APP_COORD --> STORES
+    APP_COORD --> PROXY_MGR
+    APP_COORD --> BUILDERS
 
-    COORD --> CONFIGS
-    COORD --> PARSERS
-    CONFIGS --> MODELS
-    PARSERS --> MODELS
+    APP_COORD -- "Named Pipe IPC" --> PIPE_SRV
+    CLI_CMD -- "Named Pipe IPC" --> PIPE_SRV
 
-    COORD --> WINPROC
-    COORD --> WINPROXY
-    COORD --> WINFW
-    COORD --> WINROUTES
-    COORD --> JOURNAL
-    COORD --> NETMON
+    PIPE_SRV --> SVC_CTX
+    SVC_CTX --> BOOT_CONN
+    SVC_CTX --> PROC
+    SVC_CTX --> ROUTES
+    SVC_CTX --> FW
+    PROC --> JOB
 
-    COORD --> LNXPROC
-    COORD --> LNXPROXY
-    COORD --> LNXROUTES
-
-    WINPROC --> JOBOBJ
-    WINPROC --> XRAY
-    WINPROC --> HY2
-    WINROUTES --> WINTUN
-    LNXPROC --> XRAY
-    LNXPROC --> HY2
+    PROC --> SINGBOX
+    PROC --> XRAY
+    PROC --> HY2
+    ROUTES --> WINTUN
 ```
-
-### Crate Responsibility Matrix
-
-| Crate | Target | Key Responsibilities | Dependencies |
-|---|---|---|---|
-| **`buster-core`** | All platforms | Protocol parsing (VLESS Reality/Vision, VMess, Trojan, Shadowsocks, Hysteria 2, Clash YAML), config builders (Xray JSON, Hysteria YAML), routing rules, IDN Cyrillic normalization, split-tunneling models. | Pure Rust: `serde`, `serde_json`, `serde_yaml`, `url`, `base64`, `uuid`, `regex` |
-| **`buster-windows`** | Windows (`x86_64`) | Windows native platform layer: Win32 Job Objects, hidden process spawning with piped logging, WinINET proxy registry and refresh, Windows Firewall COM kill switch, Wintun adapter management, `/32` default gateway route pinning, DPAPI encryption, session crash journals. | `windows` (0.58), `winreg`, `buster-core`, `tokio` |
-| **`buster-app`** | All platforms | Tauri v2 desktop application, IPC command handlers (`commands.rs`), application bootstrap (`main.rs`), `SessionCoordinator` connection lifecycle, single-instance guard, system tray, dual-channel auto-updater, Linux platform subsystem (`platform/linux.rs`). | `tauri` (2.x), `buster-core`, `buster-windows` (cfg-guarded), `reqwest`, `tokio`, `sha2` |
-| **`frontend`** | Webview | Svelte 5 Single Page Application, Tailwind CSS styling, Lucide icons, interactive dashboard, throughput graphs, server management, routing rule builder, activity logs, settings. | Svelte 5, Vite 6, Tailwind CSS 3.4 |
 
 ---
 
-## 3. Frontend-to-Backend Tauri IPC Interaction
+## 3. Privilege Decoupling: Service & Named Pipe IPC
 
-Communication between the Svelte 5 frontend and the Rust backend is governed by strictly typed Tauri v2 IPC commands and thread-safe shared application state (`AppState`).
-
-### Svelte 5 Reactivity Model
-The frontend uses Svelte 5 **Runes**:
-- `$state`: Drives UI views, server lists, connection statuses, throughput data, and active settings.
-- `$derived`: Calculates filtered servers, active profile names, ping statistics, and visual connection states.
-- `$effect`: Automatically synchronizes form modifications, initiates background polling (e.g. throughput and latency), and binds window resize events.
-
-### IPC Command Registry (`crates/buster-app/src/commands.rs`)
-
-```text
-Frontend (invoke) ───────────────────────────────> Tauri IPC Handler
-  ├── connect_tunnel(profile_id)                 -> AppState.coordinator.connect(...)
-  ├── disconnect_tunnel()                        -> AppState.coordinator.disconnect()
-  ├── get_status()                               -> Coordinator state query
-  ├── get_profiles() / save_profile()            -> ProfileStore (DPAPI / 0600)
-  ├── import_content(text)                       -> Universal import pipeline
-  ├── get_subscriptions() / add_subscription()   -> SubscriptionService & Store
-  ├── get_settings() / save_settings()           -> SettingsStore
-  ├── ping_profile() / ping_all_profiles()       -> LatencyService (TCP Ping)
-  ├── check_cores() / update_cores()             -> UpdaterService (SHA-256 sync)
-  ├── fetch_ip_info()                            -> IpInfoService (Exit IP lookup)
-  └── get_recent_logs()                          -> LogLine ring buffer (400 lines)
+### 3.1 Security Descriptor & Access Control
+The Windows Service creates the named pipe `\\.\pipe\BusterVPNService` using a security descriptor string:
 ```
+D:(A;;GRGW;;;WD)(A;;GRGW;;;IU)(A;;GRGW;;;AU)
+```
+- `WD` (Everyone), `IU` (Interactive Users), `AU` (Authenticated Users) receive `GENERIC_READ | GENERIC_WRITE`.
+- This enables `buster-app.exe` (running as an unprivileged user under `asInvoker`) and `busterctl.exe` to send execution commands without triggering UAC elevation.
 
-Real-time logs generated by child core processes (`stdout` and `stderr`) are streamed into an asynchronous Tokio MPSC channel, classified into log severity levels, and maintained in an in-memory ring buffer (capped at 400 lines) accessible to the frontend via `get_recent_logs`.
+### 3.2 IPC Wire Protocol
+Communication utilizes length-prefixed JSON frames over the named pipe:
+- Frame header: 4 bytes unsigned 32-bit integer (little-endian) representing payload length in bytes.
+- Frame payload: UTF-8 encoded JSON string matching `IpcRequest` and `IpcResponse` schemas.
+
+#### IPC Command Messages:
+- `Ping`: Connection health check; returns current service version and process ID.
+- `GetStatus`: Queries tunnel state (`Connected`, `Connecting`, `Disconnected`, `Error`), active profile name, uptime duration, and operational mode.
+- `ConnectTunnel(ConnectTunnelParams)`: Directs the service to write core configuration, spawn the core executable inside a `SafeJobObject`, configure the Wintun adapter, pin `/32` physical bypass routes, and enable the firewall Kill Switch if requested.
+- `DisconnectTunnel`: Reverses network modifications, dismantles Wintun routes, flushes DNS, terminates child processes, and releases firewall rules.
+- `GetLogs`: Returns the circular memory ring buffer of recent stdout/stderr lines.
+- `SetAutoConnectOnBoot(bool)`: Persists boot tunnel activation preference to `service_config.json`.
 
 ---
 
-## 4. Connection Lifecycle & State Machine
+## 4. Tunnel Core Integration: Unified Sing-box & Classic Engines
 
-The central orchestrator of BusterVPN is the `SessionCoordinator` (`crates/buster-app/src/services/session_coordinator.rs`). All state mutations are strictly serialized using asynchronous mutexes to prevent race conditions.
+BusterVPN supports two engine architectures switchable in Settings:
 
-### State Transition Diagram
+### 4.1 Unified Sing-box Engine
+`sing-box.exe` handles all inbound and outbound traffic in a single process:
+- **Inbounds**:
+  - `tun`: Interface name `BusterVPN_TUN`, subnet `172.19.0.1/30`, MTU `1400`, `auto_route: true`, `strict_route: true`, stack `system`.
+  - `mixed`: Dual HTTP and SOCKS5 listener bound to `127.0.0.1:10808` / `10809`.
+- **Outbounds**:
+  - Direct mapping for VLESS (Reality, XTLS-Vision, WS, gRPC), Hysteria 2, TUIC v5, WireGuard, ShadowTLS, AnyTLS, Trojan, VMess, Shadowsocks, `direct`, `block`, and `dns`.
+- **Rule-Sets (`.srs`)**:
+  - Binary compiled rule-sets (`geosite-ru.srs` and `geoip-ru.srs`) are passed as `rule_set` references for domain and IP classification, reducing memory usage compared to legacy `.dat` files.
+- **Process Routing**:
+  - Native `process_name` rules direct specified application binaries into either the `direct` outbound (bypass) or tunnel outbound (proxy).
 
-```mermaid
-stateDiagram-v2
-    [*] --> Disconnected
-    Disconnected --> Connecting: connect(profile, settings)
-    Connecting --> Connected: Core spawned + Routes pinned + Proxy/TUN ready
-    Connecting --> Disconnected: Preflight error / Rollback
-    Connected --> Disconnecting: disconnect()
-    Disconnecting --> Disconnected: Teardown complete & Settings restored
-    Connected --> Disconnected: Watchdog detects core crash (KillSwitch stays armed)
-```
+### 4.2 Classic Dual-Engine Architecture
+Pairs `xray.exe` for TCP/TLS protocols with `hysteria.exe` for UDP port-hopping links, utilizing text-based `geoip.dat` and `geosite.dat` routing assets.
 
-### Detailed Connection Sequence
+---
+
+## 5. Network Lifecycle & Teardown Sequencing
+
+To prevent plaintext traffic leaks, connection setup and teardown follow strict deterministic sequences:
 
 ```mermaid
 sequenceDiagram
-    participant UI as Svelte 5 UI
-    participant CMD as Tauri IPC (commands.rs)
-    participant SC as SessionCoordinator
-    participant CORE as buster-core (Config Builders)
-    participant WIN as Platform Layer (buster-windows / linux.rs)
-    participant PROC as CoreProcessManager (Job Object)
+    autonumber
+    participant UI as buster-app / busterctl
+    participant Svc as buster-service
+    participant Net as Win32 Route API
+    participant FW as Windows Firewall
+    participant Core as Core Executable
 
-    UI->>CMD: invoke("connect_tunnel", { profileId })
-    CMD->>SC: connect(&profile, &settings, &cores_dir)
-    SC->>SC: Set status = Connecting
-
-    alt TUN mode enabled
-        SC->>WIN: Verify elevation / CAP_NET_ADMIN
-        SC->>WIN: Discover physical gateway & resolve server IPv4
-        SC->>WIN: Install /32 server bypass route via physical gateway
+    Note over UI,Core: Tunnel Activation Phase
+    UI->>Svc: ConnectTunnel(params)
+    Svc->>Net: Query physical default gateway & interface index
+    Svc->>Net: Pin /32 static route to Server IP via physical gateway
+    Svc->>Core: Launch executable inside SafeJobObject
+    Svc->>Net: Configure Wintun IP (172.19.0.1/30) & default route
+    opt Kill Switch Enabled
+        Svc->>FW: Enable default-block outbound policy & allow rules
     end
+    Svc-->>UI: Tunnel Connected
 
-    SC->>WIN: Allocate local proxy ports (10808 SOCKS5, 10809 HTTP)
-    SC->>SC: Prepare runtime directory & verify core SHA-256 hashes
-    SC->>WIN: Dismantle any stale orphaned Wintun adapters
-
-    alt Profile is Xray
-        SC->>CORE: build_xray_config_json(params)
-    else Profile is Hysteria 2
-        SC->>CORE: build_hysteria_config(params)
+    Note over UI,Core: Tunnel Teardown Phase
+    UI->>Svc: DisconnectTunnel
+    opt Kill Switch Active
+        Svc->>FW: Restore original firewall policy & remove rules
     end
-
-    SC->>WIN: Create SafeJobObject (KILL_ON_JOB_CLOSE)
-    SC->>PROC: spawn_core(exe, args, job_object)
-    SC->>WIN: Record PID & path in SessionJournal
-
-    opt Kill Switch enabled
-        SC->>WIN: FirewallKillSwitch::enable(core_exe, server_ips)
-    end
-
-    opt System Proxy mode enabled
-        SC->>WIN: SystemProxyManager::enable(ports)
-    end
-
-    opt TUN mode enabled (Windows)
-        SC->>WIN: Background async DNS apply to BusterVPN_TUN (netsh)
-    end
-
-    SC->>PROC: Start async log streaming (stdout/stderr)
-    SC->>SC: Spawn Crash Watchdog & Network Gateway Monitor
-    SC->>SC: Set status = Connected
-    SC-->>CMD: Ok(())
-    CMD-->>UI: Update reactive state to Connected
+    Svc->>Core: Terminate core process (SIGKILL / JobObject)
+    Svc->>Net: Remove Wintun adapter and virtual routes
+    Svc->>Net: Remove /32 physical bypass route
+    Svc->>Net: Flush DNS resolver cache (DnsFlushResolverCache)
+    Svc-->>UI: Tunnel Disconnected
 ```
 
 ---
 
-## 5. Strict Teardown & Disconnection Ordering
+## 6. Crash Recovery & Resilience
 
-To eliminate any window where plaintext traffic could leak outside the encrypted tunnel, the teardown sequence follows an uncompromising, reverse-dependency order:
+### 6.1 SafeJobObject Guarantee
+The Win32 Job Object is created with the `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` flag. If `buster-service.exe` or `buster-app.exe` terminates unexpectedly, the Windows kernel terminates all assigned core processes unconditionally.
 
-1. **Stop Network Monitor**: Terminate the gateway monitoring thread to prevent spurious route re-additions during shutdown.
-2. **System Proxy Reset**: Immediately reset WinINET (`ProxyEnable = 0`, clear `ProxyServer`) and invoke `InternetSetOption` refresh. Disable GNOME/KDE system proxies.
-3. **Release Kill Switch**: Remove firewall block filters and restore default outbound action to `Allow`.
-4. **Remove Virtual Routes**:
-   - Delete virtual TUN routes (`0.0.0.0/1`, `128.0.0.0/1`).
-   - Remove the VPN server's static `/32` host bypass route from the physical routing table.
-5. **Terminate Core Process**:
-   - Send `SIGTERM` / invoke `TerminateJobObject` on the process tree.
-   - Wait for process termination; force kill if not exited within timeout.
-6. **Dismantle Wintun Adapter**: Release driver handles and invoke Wintun teardown.
-7. **Flush DNS Cache**: Execute `DnsFlushResolverCache` (Windows) or flush systemd-resolved (Linux) to purge cached records.
-8. **Clear Crash Journal**: Atomically delete `session.json`, `proxy_journal.json`, and `killswitch_journal.json`.
-9. **Transition State**: Set coordinator status to `Disconnected`.
+### 6.2 Session Recovery Journal
+Every network change is logged to disk in atomic transaction journals (`session.json`, `killswitch_journal.json`, `proxy_journal.json`). On service startup or application initialization:
+1. Dead core processes are detected and cleaned up.
+2. Lingering firewall block rules are removed.
+3. Orphaned Wintun virtual adapters are dismantled.
+4. Per-user WinINET proxy settings are restored to direct connection.
+5. DNS cache is flushed.
 
 ---
 
-## 6. Process Containment & Subsystem Safety
+## 7. Security Architecture
 
-Orphaned VPN processes are a severe hazard in desktop VPN clients: a dangling core can lock the Wintun adapter, monopolize proxy ports, or create routing black holes.
+### 7.1 Windows Service Hardening
+- Service binary installed to `%ProgramFiles%\BusterVPN\buster-service.exe`.
+- Named Pipe security descriptor explicitly denies network access (`deny network logon`). Only local inter-process callers are authenticated.
+- Service IPC parser enforces payload size limits (maximum 16 MB) to prevent denial-of-service memory exhaustion.
 
-### Windows: Win32 Job Objects (`crates/buster-windows/src/job_object.rs`)
-Child core processes are encapsulated in an anonymous Win32 Job Object:
-```rust
-let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-info.BasicLimitInformation.LimitFlags =
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
-
-SetInformationJobObject(
-    handle,
-    JobObjectExtendedLimitInformation,
-    &info as *const _ as *const c_void,
-    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-)?;
-```
-- **Guaranteed Kernel Teardown**: When BusterVPN exits cleanly, crashes, or is killed via Task Manager, the operating system kernel closes the Job Object handle. The kernel terminates all processes assigned to the Job Object unconditionally.
-- **No Shell Execution**: Processes are spawned directly using `Command::new(exe_path)` with an explicit argument vector (`Vec<String>`). No intermediate `cmd.exe` or PowerShell shell is invoked, neutralizing command-injection vulnerabilities.
-- **Environment Sanitation**: Explicitly sets `NO_COLOR=1` and `FORCE_COLOR=0` to keep log streams cleanly parseable, and pins `XRAY_LOCATION_ASSET` to the runtime directory.
-
-### Linux: Process Groups & `PR_SET_PDEATHSIG` (`crates/buster-app/src/platform/linux.rs`)
-- Processes are spawned into a dedicated process group (`cmd.process_group(0)`).
-- A pre-execution hook configures kernel-level parent-death signaling:
-  ```rust
-  unsafe {
-      cmd.pre_exec(|| {
-          if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
-              return Err(std::io::Error::last_os_error());
-          }
-          Ok(())
-      });
-  }
-  ```
-- If the parent `buster-app` process dies, the Linux kernel automatically delivers `SIGTERM` to the child core process.
-
----
-
-## 7. Network Recovery & Crash Journals (`session_journal`)
-
-If power is suddenly interrupted or the system experiences a hard crash while connected, network settings might be left in an inconsistent state (e.g. system proxy pointing to a dead port or firewall blocking all outbound traffic).
-
-BusterVPN resolves this via atomic on-disk crash journals and the `startup_recovery()` routine.
-
-### The Journal Triumvirate
-1. **`session.json`**: Contains active core PID, canonical executable path, and launch timestamp.
-2. **`killswitch_journal.json`**: Contains pre-activation firewall outbound profile policies (`Domain`, `Private`, `Public`).
-3. **`proxy_journal.json`**: Contains pre-activation WinINET proxy settings, PAC URLs, and auto-detect states.
-
-### Startup Recovery Sequence (`SessionJournal::recover_all_crash_state`)
-Every time BusterVPN launches, it performs startup recovery before initializing the UI:
-1. **Orphan Process Recovery**: Inspects `session.json`. If a recorded PID is running, it verifies whether the process matches the executable path and creation time before terminating it via `taskkill`.
-2. **Firewall Restoration**: Inspects `killswitch_journal.json`. If outbound rules were left in `Block` state, it immediately resets `Domain`, `Private`, and `Public` profiles back to `Allow` and purges residual BusterVPN rules.
-3. **System Proxy Rollback**: Inspects `proxy_journal.json`. If WinINET was left pointing to local proxy ports, it clears `ProxyServer`, sets `ProxyEnable = 0`, and calls `InternetSetOption(INTERNET_OPTION_SETTINGS_CHANGED)`.
-4. **Adapter Cleanup**: Scans for dangling `BusterVPN_TUN` / `BusterVPN` Wintun adapters and releases driver instances.
-5. **DNS Flush**: Clears the system DNS resolver cache to restore clean connectivity.
-
----
-
-## 8. TUN Mode & Route Architecture
-
-### The Routing Loop Problem & `/32` Host Bypass
-In TUN mode, the VPN adapter becomes the default gateway (`0.0.0.0/0` or the split-pair `0.0.0.0/1` and `128.0.0.0/1`). If unmanaged, the core process's own encrypted UDP/TCP packets sent to the remote VPN server would be routed back into the TUN adapter, causing an immediate infinite routing loop and dropping the connection.
-
-BusterVPN prevents this through deterministic route pinning:
-1. Before starting the core, `resolve_server_ipv4` resolves the VPN server's hostname to an IPv4 address.
-2. `find_physical_gateway` discovers the physical network interface's default gateway (e.g. `192.168.1.1` on Wi-Fi/Ethernet).
-3. `add_server_bypass_route` installs a static `/32` host route (`MASK 255.255.255.255`) pointing directly to the physical gateway:
-   ```text
-   route.exe ADD <VPN_SERVER_IP> MASK 255.255.255.255 <PHYSICAL_GATEWAY> METRIC 1
-   ```
-4. In Xray JSON configs, the physical interface is bound using `sendThrough` and `streamSettings.sockopt.interface`, ensuring direct rules and DNS queries never enter the virtual TUN interface.
-
-### Dynamic Network Monitoring (`NetworkMonitor`)
-On Windows, `NetworkMonitor` utilizes the IP Helper API (`NotifyRouteChange2` / `GetAdaptersAddresses`) to listen for underlying network changes (such as switching from Wi-Fi to Ethernet or roaming between access points). When a gateway change is detected, BusterVPN automatically recalculates the physical gateway and repins the server `/32` bypass route on-the-fly without dropping the tunnel session.
-
-### DNS & QUIC Management
-- **DNS Assignment**: Configured with static, reliable DNS resolvers (`1.1.1.1`, `8.8.8.8`). On Windows, `apply_dns_servers` applies resolvers directly to `BusterVPN_TUN` using `netsh`.
-- **QUIC / HTTP3 Throttling Defense**: In Xray configurations, outbound UDP port 443 is blocked by default (`"outboundTag": "blocked", "port": "443", "network": "udp"`). This prevents ISPs from throttling or disrupting UDP-based QUIC traffic, forcing web browsers to fall back seamlessly to standard TCP TLS 1.3 over the tunnel.
-
----
-
-## 9. Fail-Closed Kill Switch
-
-Implemented via Windows Firewall COM automation (`crates/buster-windows/src/firewall.rs`):
-
-```mermaid
-flowchart TD
-    KS_START["Kill Switch Enabled"] --> SNAPSHOT["Snapshot Current Firewall Profile Defaults<br/>(Domain, Private, Public)"]
-    SNAPSHOT --> WRITE_JOURNAL["Write killswitch_journal.json"]
-    WRITE_JOURNAL --> ADD_RULES["Add Narrow Allow Rules:<br/>1. Core Executable (xray.exe / hysteria.exe)<br/>2. Loopback (127.0.0.1/32, ::1/128)<br/>3. DNS Client (UDP/TCP 53)<br/>4. DHCP (UDP 67/68)<br/>5. VPN Server /32 IP Bypass"]
-    ADD_RULES --> BLOCK_DEFAULT["Set DefaultOutboundAction = Block<br/>on all profiles"]
-    BLOCK_DEFAULT --> VERIFY["Verify Enforcement"]
-```
-
-### Crash Protection Guarantee
-If BusterVPN crashes or the machine loses power while the Kill Switch is armed, outbound traffic remains **blocked** by the Windows kernel. Plaintext data never leaks. On the subsequent launch, `startup_recovery()` automatically restores normal firewall policies.
-
----
-
-## 10. Routing Matrix & Split Tunneling
-
-BusterVPN configures routing decisions inside the core engine:
-
-| Rule Category | Xray TUN | Xray Proxy | Hysteria 2 TUN | Hysteria 2 Proxy |
-|---|---|---|---|---|
-| **Private/LAN Bypass** | Direct (`geoip:private`) | Direct (`geoip:private`) | `route.ipv4Exclude` | ProxyOverride |
-| **RuNet Bypass** | Direct (`geosite:category-ru`, `geosite:ru`, `geoip:ru`) | Direct (`geosite`, `geoip`) | Custom IP/CIDR excludes | ProxyOverride |
-| **App Split Tunneling** | Supported (`process` matching) | Not applicable | Not applicable | Not applicable |
-| **Custom Domain Rules** | Supported (with IDN Cyrillic Punycode) | Supported | Direct via SNI/Host | ProxyOverride |
-| **Custom IP/CIDR Rules** | Supported (`ip` matching) | Supported | Supported (`route.*Exclude`) | ProxyOverride |
-
-### App Split Tunneling Modes
-- **`BypassSelected`**: All applications route through the VPN tunnel, except designated applications (e.g. `discord.exe`, `telegram.exe`, or local banking apps) which are routed directly.
-- **`ProxySelected`**: Only designated applications are routed through the VPN tunnel; all other system traffic proceeds directly through the physical ISP connection.
-
----
-
-## 11. Storage & Credential Security
-
-| Secret / Asset | Storage Mechanism | Access Controls & Encryption | Lifecycle |
-|---|---|---|---|
-| **Server Profiles & Keys** | `%LOCALAPPDATA%\BusterVPN\profiles.dat` | Windows DPAPI (`CryptProtectData`, CurrentUser scope, magic `b"BVPN1"`) / Linux POSIX `0600` | Persistent until user deletion |
-| **Subscription URLs** | `%LOCALAPPDATA%\BusterVPN\subscriptions.dat` | Windows DPAPI with distinct purpose entropy (`SubscriptionStore`) / Linux `0600` | Persistent until subscription deletion |
-| **Runtime Core Configs** | `%LOCALAPPDATA%\BusterVPN\runtime\` | Per-session directory with explicit user DACLs | Created on connect; deleted on disconnect |
-| **Diagnostics Logs** | `%LOCALAPPDATA%\BusterVPN\logs\` | Plaintext log files; strictly sanitized against URLs, tokens, and keys | 14-day retention cycle |
-
----
-
-## 12. Failure & Recovery Matrix
-
-| Failure Event | Immediate Behavior | Automated Recovery Path |
-|---|---|---|
-| **Missing Core Binary** | Connection aborted during preflight; status set to `Disconnected`. | `UpdaterService` automatically triggers download from VPS manifest. |
-| **Missing Elevation (TUN)** | Connection aborted before route mutation. | Clear error surfaced in UI asking to run as Administrator or set `CAP_NET_ADMIN`. |
-| **Port Conflict (10808/10809)** | Port scanner detects conflict; dynamically selects next available port pair. | Connection proceeds on clean loopback ports. |
-| **Core Process Crashes Mid-Session** | Watchdog detects PID termination; logs warning. | If Kill Switch is armed, firewall remains blocked (fail closed) to protect privacy. User disconnects or restarts app to reset. |
-| **GUI Abruptly Terminated** | Windows kernel closes Job Object; child processes killed immediately. | Startup recovery clears firewall block and restores system proxy on next launch. |
-| **Physical Gateway Switched** | `NetworkMonitor` detects route table change via IP Helper API. | Server `/32` bypass route is automatically removed and re-added for the new gateway. |
-| **Corrupted Profile Store** | DPAPI decryption fails or magic header mismatch. | Store is quarantined (`profiles_corrupted_*.bak`) without clobbering; fresh store initialized. |
+### 7.2 Frontend Data Protection
+- Streamer IP Masking persists state in `localStorage` under `bustervpn_hide_ip`. When enabled, public IP addresses are masked before rendering in the DOM.
+- WebRTC leak test utilizes `RTCPeerConnection` with STUN (`stun:stun.l.google.com:19302`) to verify that gathered ICE candidates do not expose non-tunnel network interface addresses.
+- DNS leak test issues queries against `whoami.cloudflare` to verify upstream resolver assignment.

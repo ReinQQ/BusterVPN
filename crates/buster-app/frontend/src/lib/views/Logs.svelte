@@ -3,6 +3,8 @@
   import { toast } from '../stores/toast.svelte.js';
   import { t, localeStore } from '../stores/locale.svelte.js';
   import { Search, Copy, Trash2, ArrowDown, Check } from 'lucide-svelte';
+  import ServiceIcon from '../components/ServiceIcon.svelte';
+  import { matchService } from '../serviceIcons.js';
 
   let filterLevel = $state('all');
   let searchQuery = $state('');
@@ -148,10 +150,17 @@
         {@const lvl = getLogLevel(log)}
         {@const stream = getLogStream(log)}
         {@const msg = getLogText(log)}
+        {@const svc = matchService(msg)}
         <div class="log-row leading-relaxed flex items-start gap-2 hover:bg-white/[0.04] px-1 py-0.5 rounded transition-colors font-mono">
           <span class="log-timestamp text-slate-400 shrink-0 select-none font-mono">
             {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '00:00:00'}
           </span>
+
+          {#if svc}
+            <span class="inline-flex items-center shrink-0" title={svc.name}>
+              <ServiceIcon name={svc} size={13} className="mt-0.5" />
+            </span>
+          {/if}
 
           <!-- Level Badge -->
           <span

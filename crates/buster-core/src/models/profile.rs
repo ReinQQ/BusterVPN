@@ -2,7 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::models::{
-    BackendKind, ConfigurationError, Hysteria2ClientConfig, XrayClientConfig,
+    AnyTlsClientConfig, BackendKind, ConfigurationError, Hysteria2ClientConfig,
+    ShadowTlsClientConfig, TuicClientConfig, WireGuardClientConfig, XrayClientConfig,
 };
 
 /// Persisted server entry. Raw link contains credentials and is protected with DPAPI
@@ -78,7 +79,7 @@ impl ServerProfile {
 }
 
 /// A parsed share link/manual profile, ready to be turned into a core config.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ParsedServer {
     pub backend: BackendKind,
     pub name: String,
@@ -86,6 +87,10 @@ pub struct ParsedServer {
     pub port: u16,
     pub xray: Option<XrayClientConfig>,
     pub hysteria2: Option<Hysteria2ClientConfig>,
+    pub tuic: Option<TuicClientConfig>,
+    pub wireguard: Option<WireGuardClientConfig>,
+    pub shadowtls: Option<ShadowTlsClientConfig>,
+    pub anytls: Option<AnyTlsClientConfig>,
 }
 
 impl ParsedServer {

@@ -46,7 +46,7 @@ let mockSettings = {
 };
 
 let mockLogs = [
-  { level: 'info', stream: 'stdout', text: 'BusterVPN Core v1.4.0 initialized on Windows 11', message: 'BusterVPN Core v1.4.0 initialized on Windows 11', timestamp: new Date().toISOString() },
+  { level: 'info', stream: 'stdout', text: 'BusterVPN Core v1.5.0 initialized on Windows 11', message: 'BusterVPN Core v1.5.0 initialized on Windows 11', timestamp: new Date().toISOString() },
   { level: 'info', stream: 'stdout', text: 'Safe Job Object limits applied: KILL_ON_JOB_CLOSE', message: 'Safe Job Object limits applied: KILL_ON_JOB_CLOSE', timestamp: new Date().toISOString() },
   { level: 'info', stream: 'stdout', text: 'Ready to connect. All route engines stand by.', message: 'Ready to connect. All route engines stand by.', timestamp: new Date().toISOString() },
 ];
@@ -144,6 +144,36 @@ function mockInvoke(cmd, args) {
             org: mockStatus === 'connected' ? 'Datacenter Global' : 'Local ISP',
           });
           break;
+        case 'check_webrtc_leak':
+          resolve({
+            is_leaking: false,
+            stun_ip: mockStatus === 'connected' ? '185.122.54.10' : '94.25.178.44',
+            status_text: 'WebRTC защищён: утечек не обнаружено',
+          });
+          break;
+        case 'fetch_diagnostics':
+          resolve({
+            ip_info: {
+              ip: mockStatus === 'connected' ? '185.122.54.10' : '94.25.178.44',
+              country: mockStatus === 'connected' ? 'Germany' : 'Russia',
+              country_code: mockStatus === 'connected' ? 'DE' : 'RU',
+              city: mockStatus === 'connected' ? 'Frankfurt' : 'Moscow',
+              isp: mockStatus === 'connected' ? 'Datacenter Global' : 'Local ISP',
+              org: mockStatus === 'connected' ? 'Datacenter Global' : 'Local ISP',
+            },
+            dns_leak: {
+              is_leaking: false,
+              resolver_ip: '1.1.1.1',
+              expected_resolver: 'Cloudflare / Secure Upstream',
+              status_text: 'DNS защищён: утечек не обнаружено',
+            },
+            webrtc_leak: {
+              is_leaking: false,
+              stun_ip: mockStatus === 'connected' ? '185.122.54.10' : '94.25.178.44',
+              status_text: 'WebRTC защищён: утечек не обнаружено',
+            },
+          });
+          break;
         case 'get_recent_logs':
           resolve(mockLogs);
           break;
@@ -164,8 +194,8 @@ function mockInvoke(cmd, args) {
         case 'check_update':
           resolve({
             update_available: false,
-            current_version: '1.4.0',
-            latest_version: '1.4.0',
+            current_version: '1.5.0',
+            latest_version: '1.5.0',
             download_url: null,
             release_notes: null,
           });
@@ -180,6 +210,28 @@ function mockInvoke(cmd, args) {
           resolve(1);
           break;
         case 'update_tray_menu':
+          resolve();
+          break;
+        case 'check_dns_leak':
+          resolve({
+            is_leaking: false,
+            resolver_ip: '1.1.1.1',
+            expected_resolver: 'Cloudflare / Secure Upstream',
+            status_text: 'DNS защищён: утечек не обнаружено',
+          });
+          break;
+        case 'get_service_status':
+          resolve({
+            installed: true,
+            running: true,
+            state_text: 'Активна',
+            auto_connect: false,
+          });
+          break;
+        case 'manage_service':
+          resolve('Служба обновлена');
+          break;
+        case 'set_service_auto_connect':
           resolve();
           break;
         default:
@@ -221,4 +273,11 @@ export const api = {
   updateCores: () => invokeTauri('update_cores'),
   checkUpdate: () => invokeTauri('check_update'),
   applyUpdate: () => invokeTauri('apply_update'),
+  checkDnsLeak: () => invokeTauri('check_dns_leak'),
+  checkWebRtcLeak: (expectedIp) =>
+    invokeTauri('check_webrtc_leak', { expectedIp, expected_ip: expectedIp }),
+  fetchDiagnostics: () => invokeTauri('fetch_diagnostics'),
+  getServiceStatus: () => invokeTauri('get_service_status'),
+  manageService: (action) => invokeTauri('manage_service', { action }),
+  setServiceAutoConnect: (enabled) => invokeTauri('set_service_auto_connect', { enabled }),
 };

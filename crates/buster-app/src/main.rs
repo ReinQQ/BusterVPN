@@ -24,15 +24,15 @@ fn main() {
     let _ = std::fs::create_dir_all(&cores_dir);
 
     // If cores are not in AppData, check next to the executable
-    let xray_name = if cfg!(target_os = "windows") { "xray.exe" } else { "xray" };
-    if !cores_dir.join(xray_name).exists() {
+    let singbox_name = if cfg!(target_os = "windows") { "sing-box.exe" } else { "sing-box" };
+    if !cores_dir.join(singbox_name).exists() {
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
                 let local_cores_linux = exe_dir.join("cores-linux");
                 let local_cores = exe_dir.join("cores");
-                if local_cores.join(xray_name).exists() {
+                if local_cores.join(singbox_name).exists() {
                     cores_dir = local_cores;
-                } else if local_cores_linux.join(xray_name).exists() {
+                } else if local_cores_linux.join(singbox_name).exists() {
                     cores_dir = local_cores_linux;
                 }
             }
@@ -80,6 +80,7 @@ fn main() {
             let updater_check = app_state.updater_service.clone();
             let ip_info_service = app_state.ip_info_service.clone();
             tauri::async_runtime::spawn(async move {
+                let _ = buster_app::services::session_coordinator::SessionCoordinator::ensure_service_running().await;
                 let _ = updater_check.check_client_update().await;
                 let _ = ip_info_service.fetch_ip_info(false).await;
             });
@@ -226,6 +227,12 @@ fn main() {
             pick_exe_file,
             import_content,
             update_tray_menu,
+            check_dns_leak,
+            check_webrtc_leak,
+            fetch_diagnostics,
+            get_service_status,
+            manage_service,
+            set_service_auto_connect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running BusterVPN application");

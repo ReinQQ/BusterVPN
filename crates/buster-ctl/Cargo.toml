@@ -1,0 +1,21 @@
+[package]
+name = "buster-ctl"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "busterctl"
+path = "src/main.rs"
+
+[dependencies]
+buster-core = { path = "../buster-core" }
+buster-windows = { path = "../buster-windows" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+uuid.workspace = true

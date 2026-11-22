@@ -16,8 +16,9 @@ use crate::platform::LogLine;
 
 use crate::models::{AppSettings, SubscriptionRecord};
 use crate::services::{
-    ClientUpdateStatus, CoresIntegrityReport, IpInfo, IpInfoService, LatencyService,
-    SessionCoordinator, SubscriptionService, UpdaterService,
+    ClientUpdateStatus, CoresIntegrityReport, DiagnosticReport, DnsLeakReport, IpInfo,
+    IpInfoService, LatencyService, SessionCoordinator, SubscriptionService, UpdaterService,
+    WebRtcLeakReport,
 };
 use crate::storage::{ProfileStore, SettingsStore, SubscriptionStore};
 
@@ -584,4 +585,137 @@ pub async fn update_tray_menu(
     }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ServiceUiStatus {
+    pub installed: bool,
+    pub running: bool,
+    pub state_text: String,
+    pub auto_connect: bool,
+}
+
+#[tauri::command]
+pub async fn check_dns_leak(state: tauri::State<'_, AppState>) -> Result<DnsLeakReport, String> {
+    let is_connected = state.coordinator.get_status().await == ConnectionStatus::Connected;
+    Ok(state.ip_info_service.check_dns_leak(is_connected).await)
+}
+
+#[tauri::command]
+pub async fn check_webrtc_leak(
+    state: tauri::State<'_, AppState>,
+    expected_ip: Option<String>,
+) -> Result<WebRtcLeakReport, String> {
+    Ok(state.ip_info_service.check_webrtc_leak(expected_ip.as_deref()).await)
+}
+
+#[tauri::command]
+pub async fn fetch_diagnostics(
+    state: tauri::State<'_, AppState>,
+) -> Result<DiagnosticReport, String> {
+    let is_connected = state.coordinator.get_status().await == ConnectionStatus::Connected;
+    Ok(state.ip_info_service.fetch_diagnostics(is_connected).await)
+}
+
+#[tauri::command]
+pub async fn get_service_status(_state: tauri::State<'_, AppState>) -> Result<ServiceUiStatus, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use buster_windows::ipc::{BusterServiceClient, WindowsServiceManager, WindowsServiceState};
+        let scm_state = WindowsServiceManager::query_status();
+        let running = BusterServiceClient::is_service_available().await
+            || scm_state == WindowsServiceState::Running;
+        let installed = scm_state != WindowsServiceState::NotInstalled;
+
+        let auto_connect = if running {
+            BusterServiceClient::get_service_config().await.map(|c| c.auto_connect_on_boot).unwrap_or(false)
+        } else {
+            false
+        };
+
+        let state_text = if running {
+            "Активна".to_string()
+        } else if installed {
+            "Остановлена".to_string()
+        } else {
+            "Не установлена".to_string()
+        };
+
+        Ok(ServiceUiStatus {
+            installed,
+            running,
+            state_text,
+            auto_connect,
+        })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(ServiceUiStatus {
+            installed: false,
+            running: false,
+            state_text: "Не поддерживается на Linux".to_string(),
+            auto_connect: false,
+        })
+    }
+}
+
+#[tauri::command]
+pub async fn manage_service(action: String) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use buster_windows::ipc::WindowsServiceManager;
+        match action.to_lowercase().as_str() {
+            "start" => {
+                WindowsServiceManager::start_service().map_err(|e| e.to_string())?;
+                Ok("Служба запущена".to_string())
+            }
+            "stop" => {
+                WindowsServiceManager::stop_service().map_err(|e| e.to_string())?;
+                Ok("Служба остановлена".to_string())
+            }
+            "install" => {
+                let cur_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+                let dir = cur_exe.parent().ok_or("No parent dir")?;
+                let service_exe = dir.join("buster-service.exe");
+                let target = if service_exe.is_file() {
+                    service_exe
+                } else {
+                    std::path::PathBuf::from(r"C:\Program Files\BusterVPN\buster-service.exe")
+                };
+                if !target.is_file() {
+                    return Err("Файл buster-service.exe не найден. Соберите buster-service или переустановите приложение".to_string());
+                }
+                WindowsServiceManager::install_service(&target).map_err(|e| e.to_string())?;
+                let _ = WindowsServiceManager::start_service();
+                Ok("Служба установлена и запущена".to_string())
+            }
+            "uninstall" => {
+                WindowsServiceManager::uninstall_service().map_err(|e| e.to_string())?;
+                Ok("Служба удалена".to_string())
+            }
+            other => Err(format!("Неизвестное действие: {}", other)),
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = action;
+        Err("Фоновая служба доступна только на Windows".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn set_service_auto_connect(enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use buster_windows::ipc::BusterServiceClient;
+        if BusterServiceClient::is_service_available().await {
+            BusterServiceClient::set_auto_connect(enabled).await.map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = enabled;
+        Ok(())
+    }
 }

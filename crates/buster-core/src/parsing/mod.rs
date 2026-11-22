@@ -2,19 +2,25 @@ pub mod clash;
 pub mod encoding;
 pub mod hysteria2;
 pub mod shadowsocks;
+pub mod shadowtls;
 pub mod trojan;
+pub mod tuic;
 pub mod validation;
 pub mod vless;
 pub mod vmess;
+pub mod wireguard;
 
 pub use clash::*;
 pub use encoding::*;
 pub use hysteria2::*;
 pub use shadowsocks::*;
+pub use shadowtls::*;
 pub use trojan::*;
+pub use tuic::*;
 pub use validation::*;
 pub use vless::*;
 pub use vmess::*;
+pub use wireguard::*;
 
 use thiserror::Error;
 use crate::models::ParsedServer;
@@ -37,6 +43,12 @@ pub enum LinkParseError {
     Shadowsocks(#[from] ShadowsocksParseError),
     #[error("Hysteria2 parse error: {0}")]
     Hysteria2(#[from] Hysteria2ParseError),
+    #[error("TUIC parse error: {0}")]
+    Tuic(#[from] TuicParseError),
+    #[error("WireGuard parse error: {0}")]
+    WireGuard(#[from] WireGuardParseError),
+    #[error("ShadowTLS parse error: {0}")]
+    ShadowTls(#[from] ShadowTlsParseError),
 }
 
 const SUPPORTED_SCHEMES: &[&str] = &[
@@ -48,11 +60,19 @@ const SUPPORTED_SCHEMES: &[&str] = &[
     "hy2",
     "hysteria2+realm",
     "hy2+realm",
+    "tuic",
+    "wg",
+    "wireguard",
+    "shadowtls",
+    "anytls",
 ];
 
-/// Checks if a string starts with any recognized share link scheme.
+/// Checks if a string starts with any recognized share link scheme or is a WireGuard INI block.
 pub fn looks_like_share_link(input: &str) -> bool {
     let trimmed = input.trim().trim_start_matches('\u{FEFF}');
+    if is_wireguard_ini(trimmed) {
+        return true;
+    }
     if let Some(idx) = trimmed.find("://") {
         let scheme = trimmed[..idx].to_ascii_lowercase();
         SUPPORTED_SCHEMES.contains(&scheme.as_str())
@@ -61,11 +81,15 @@ pub fn looks_like_share_link(input: &str) -> bool {
     }
 }
 
-/// Dispatches any supported share link to its dedicated protocol parser.
+/// Dispatches any supported share link or config to its dedicated protocol parser.
 pub fn parse_share_link(input: &str) -> Result<ParsedServer, LinkParseError> {
     let trimmed = input.trim().trim_start_matches('\u{FEFF}');
     if trimmed.is_empty() {
         return Err(LinkParseError::EmptyLink);
+    }
+
+    if is_wireguard_ini(trimmed) {
+        return Ok(parse_wireguard(trimmed)?);
     }
 
     let scheme_end = trimmed
@@ -79,6 +103,9 @@ pub fn parse_share_link(input: &str) -> Result<ParsedServer, LinkParseError> {
         "trojan" => Ok(parse_trojan(trimmed)?),
         "ss" => Ok(parse_shadowsocks(trimmed)?),
         "hy2" | "hysteria2" | "hy2+realm" | "hysteria2+realm" => Ok(parse_hysteria2(trimmed)?),
+        "tuic" => Ok(parse_tuic(trimmed)?),
+        "wg" | "wireguard" => Ok(parse_wireguard(trimmed)?),
+        "shadowtls" | "anytls" => Ok(parse_shadowtls_or_anytls(trimmed)?),
         _ => Err(LinkParseError::UnsupportedScheme(scheme)),
     }
 }
@@ -132,6 +159,30 @@ mod tests {
         let res_hy2 = parse_share_link(hy2).expect("HY2 should dispatch");
         assert_eq!(res_hy2.backend, BackendKind::Hysteria2);
         assert_eq!(res_hy2.name, "HY2 Node");
+
+        // TUIC
+        let tuic = "tuic://b53494e0-9e66-41ea-9c02-e20ecdd39ec2:mysecret@tuic.example.com:8443#TUIC%20Node";
+        let res_tuic = parse_share_link(tuic).expect("TUIC should dispatch");
+        assert_eq!(res_tuic.backend, BackendKind::SingBox);
+        assert_eq!(res_tuic.name, "TUIC Node");
+
+        // WireGuard
+        let wg = "wg://aGVsbG93b3JsZDExMTExMTExMTExMTExMTExMTExMTEx@198.51.100.1:51820?public_key=YnllZ29vZGJ5ZTIyMjIyMjIyMjIyMjIyMjIyMjIyMjIy#WG%20Node";
+        let res_wg = parse_share_link(wg).expect("WireGuard should dispatch");
+        assert_eq!(res_wg.backend, BackendKind::SingBox);
+        assert_eq!(res_wg.name, "WG Node");
+
+        // ShadowTLS
+        let stls = "shadowtls://secret@stls.example.com:8443?sni=example.com#ShadowTLS%20Node";
+        let res_stls = parse_share_link(stls).expect("ShadowTLS should dispatch");
+        assert_eq!(res_stls.backend, BackendKind::SingBox);
+        assert_eq!(res_stls.name, "ShadowTLS Node");
+
+        // AnyTLS
+        let anytls = "anytls://anysecret@any.example.com:443?sni=example.com#AnyTLS%20Node";
+        let res_anytls = parse_share_link(anytls).expect("AnyTLS should dispatch");
+        assert_eq!(res_anytls.backend, BackendKind::SingBox);
+        assert_eq!(res_anytls.name, "AnyTLS Node");
     }
 
     #[test]

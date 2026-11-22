@@ -11,9 +11,11 @@ dist/
 cores/*.exe
 cores/*.dll
 cores/*.dat
+cores/*.srs
 crates/buster-app/cores/*.exe
 crates/buster-app/cores/*.dll
 crates/buster-app/cores/*.dat
+crates/buster-app/cores/*.srs
 
 # Системные и IDE файлы
 .DS_Store

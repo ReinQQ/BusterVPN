@@ -151,6 +151,7 @@ pub fn parse_vmess(link: &str) -> Result<ParsedServer, VmessParseError> {
         port,
         xray: Some(config),
         hysteria2: None,
+        ..Default::default()
     })
 }
 

@@ -31,16 +31,25 @@ impl CoreProcessManager {
         args: Vec<String>,
         job: Arc<SafeJobObject>,
     ) -> Result<Self, WindowsError> {
+        let working_dir = exe_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        Self::spawn_core_with_workdir(exe_path, args, job, working_dir)
+    }
+
+    /// Spawns a core process with an explicit working directory and assigns it to the lifecycle Job Object.
+    pub fn spawn_core_with_workdir(
+        exe_path: &Path,
+        args: Vec<String>,
+        job: Arc<SafeJobObject>,
+        working_dir: &Path,
+    ) -> Result<Self, WindowsError> {
         if !exe_path.exists() {
             return Err(WindowsError::ProcessStart(format!(
                 "Core executable not found at: {}",
                 exe_path.display()
             )));
         }
-
-        let working_dir = exe_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."));
 
         let mut cmd = Command::new(exe_path);
         cmd.args(args)
@@ -72,9 +81,10 @@ impl CoreProcessManager {
         job.assign_process(win_handle)?;
 
         tracing::info!(
-            "Successfully started core '{}' (PID {}) and assigned to Job Object",
+            "Successfully started core '{}' (PID {}) in working dir '{}' and assigned to Job Object",
             exe_path.display(),
-            pid
+            pid,
+            working_dir.display()
         );
 
         Ok(Self { child, job, pid })

@@ -90,8 +90,16 @@ pub fn parse_vless(link: &str) -> Result<ParsedServer, VlessParseError> {
     let mut sni = query
         .get("sni")
         .or_else(|| query.get("peer"))
+        .or_else(|| query.get("servername"))
+        .or_else(|| query.get("server_name"))
         .filter(|s| !s.trim().is_empty())
         .cloned();
+
+    if sni.is_none() && (security == XraySecurity::Reality || transport == XrayTransport::Tcp) {
+        if let Some(h) = query.get("host").filter(|s| !s.trim().is_empty()) {
+            sni = Some(h.clone());
+        }
+    }
 
     if sni.is_none() && security != XraySecurity::None {
         sni = Some(host.clone());
@@ -125,13 +133,13 @@ pub fn parse_vless(link: &str) -> Result<ParsedServer, VlessParseError> {
         .get("pbk")
         .or_else(|| query.get("publickey"))
         .filter(|s| !s.trim().is_empty())
-        .cloned();
+        .map(|s| s.trim().replace(' ', "+"));
 
     let reality_short_id = query
         .get("sid")
         .or_else(|| query.get("shortid"))
         .filter(|s| !s.trim().is_empty())
-        .cloned();
+        .map(|s| s.trim().to_string());
 
     let spider_x = query
         .get("spx")
@@ -199,6 +207,7 @@ pub fn parse_vless(link: &str) -> Result<ParsedServer, VlessParseError> {
         port,
         xray: Some(config),
         hysteria2: None,
+        ..Default::default()
     })
 }
 

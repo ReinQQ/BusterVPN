@@ -150,6 +150,7 @@ pub fn parse_hysteria2(link: &str) -> Result<ParsedServer, Hysteria2ParseError> 
         port: first_port,
         xray: None,
         hysteria2: Some(config),
+        ..Default::default()
     })
 }
 

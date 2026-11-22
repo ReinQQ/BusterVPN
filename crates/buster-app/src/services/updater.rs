@@ -10,27 +10,30 @@ use tracing::info;
 
 pub const PRIMARY_MANIFEST_URL: &str = "https://vpn.buster.gripe/updates/manifest.json";
 pub const FALLBACK_MANIFEST_URL: &str = "https://buster.gripe/updates/manifest.json";
-pub const CURRENT_VERSION: &str = "1.4.0";
+pub const CURRENT_VERSION: &str = "1.5.0";
 
 #[cfg(target_os = "windows")]
 pub const CORE_COMPONENTS: &[&str] = &[
+    "sing-box.exe",
     "xray.exe",
-    "hysteria.exe",
     "wintun.dll",
-    "geoip.dat",
-    "geosite.dat",
+    "geosite-ru.srs",
+    "geoip-ru.srs",
 ];
 
 #[cfg(not(target_os = "windows"))]
 pub const CORE_COMPONENTS: &[&str] = &[
+    "sing-box",
     "xray",
-    "hysteria",
-    "geoip.dat",
-    "geosite.dat",
+    "wintun.dll",
+    "geosite-ru.srs",
+    "geoip-ru.srs",
 ];
 
 pub const DEFAULT_GEOIP_SHA256: &str = "ce90dc02a81528109c99d769e1f8fe3071ded6b02a574f31e62d8f4eee312563";
 pub const DEFAULT_GEOSITE_SHA256: &str = "9ee94acb06e2f795831fb1589c0dc7af9242b0fb8d9196afd981b915b1097ed3";
+pub const DEFAULT_GEOIP_RU_SRS_SHA256: &str = "e24dc7cc17aee4d935a2c9636bdc039845cbfc5d90022e6d51345dc81dcb8697";
+pub const DEFAULT_GEOSITE_RU_SRS_SHA256: &str = "1e8a975a299059cbb79d0dd61af60b6e2fd5ff59223457a6b66797adcf49da3e";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoreManifestItem {
@@ -89,7 +92,7 @@ impl UpdaterService {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(6))
-            .user_agent("BusterVPN-Updater/1.4.0")
+            .user_agent("BusterVPN-Updater/1.5.0")
             .build()
             .unwrap_or_default();
 
@@ -146,7 +149,7 @@ impl UpdaterService {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
-                        if name == "xray" || name == "hysteria" {
+                        if name == "sing-box" {
                             if let Ok(meta) = std::fs::metadata(r_path) {
                                 let mut perms = meta.permissions();
                                 perms.set_mode(0o755);
@@ -175,17 +178,15 @@ impl UpdaterService {
                 .and_then(|m| m.cores.get(name))
                 .map(|c| c.sha256.to_lowercase())
                 .or_else(|| match name {
+                    "geoip-ru.srs" => Some(DEFAULT_GEOIP_RU_SRS_SHA256.to_lowercase()),
+                    "geosite-ru.srs" => Some(DEFAULT_GEOSITE_RU_SRS_SHA256.to_lowercase()),
                     "geoip.dat" => Some(DEFAULT_GEOIP_SHA256.to_lowercase()),
                     "geosite.dat" => Some(DEFAULT_GEOSITE_SHA256.to_lowercase()),
                     _ => None,
                 });
 
             let hash_matches = match (&current_hash, &expected_hash) {
-                (Some(curr), Some(exp)) => {
-                    curr.eq_ignore_ascii_case(exp)
-                        || (name == "geosite.dat" && curr.eq_ignore_ascii_case("7ea815b277e3a653f01ce32c6e0e33f1555c73b2abdce802ac27c27dd5fd6488"))
-                        || (name == "geoip.dat" && curr.eq_ignore_ascii_case("d46c85ee9e5798806b0e706aeadbc50a95124cf18be1ce0126bf717b805db4e6"))
-                }
+                (Some(curr), Some(exp)) => curr.eq_ignore_ascii_case(exp),
                 (Some(_), None) => true, // Offline or unlisted: present is accepted
                 _ => false,
             };
@@ -231,6 +232,7 @@ impl UpdaterService {
         let candidate_dirs = [
             cores_dir.to_path_buf(),
             PathBuf::from(r"C:\Program Files\BusterVPN\cores"),
+            PathBuf::from(r"C:\BUSTERVPN\antivpnv2\crates\buster-app\cores"),
             PathBuf::from(r"C:\BUSTERVPN\cores"),
             PathBuf::from(r"C:\BUSTERVPN"),
             PathBuf::from("/usr/lib/bustervpn/cores"),
@@ -242,6 +244,8 @@ impl UpdaterService {
                 (item.url.clone(), Some(item.sha256.to_lowercase()))
             } else {
                 let default_hash = match name {
+                    "geoip-ru.srs" => Some(DEFAULT_GEOIP_RU_SRS_SHA256.to_lowercase()),
+                    "geosite-ru.srs" => Some(DEFAULT_GEOSITE_RU_SRS_SHA256.to_lowercase()),
                     "geoip.dat" => Some(DEFAULT_GEOIP_SHA256.to_lowercase()),
                     "geosite.dat" => Some(DEFAULT_GEOSITE_SHA256.to_lowercase()),
                     _ => None,
@@ -255,23 +259,16 @@ impl UpdaterService {
             // Check if already valid locally
             let mut valid_locally = false;
             if let Some(ref exp) = expected_hash {
-                let matches_hash = |h: &str| {
-                    h.eq_ignore_ascii_case(exp)
-                        || (name == "geosite.dat" && h.eq_ignore_ascii_case("7ea815b277e3a653f01ce32c6e0e33f1555c73b2abdce802ac27c27dd5fd6488"))
-                        || (name == "geoip.dat" && h.eq_ignore_ascii_case("d46c85ee9e5798806b0e706aeadbc50a95124cf18be1ce0126bf717b805db4e6"))
-                };
+                let matches_hash = |h: &str| h.eq_ignore_ascii_case(exp);
 
                 // 1. Check runtime_dir
                 if let Some(ref r_path) = dest_runtime {
                     if r_path.is_file() {
-                        let is_small_geosite = name == "geosite.dat" && r_path.metadata().map(|m| m.len() < 10 * 1024 * 1024).unwrap_or(false);
-                        if !is_small_geosite {
-                            if let Ok(h) = Self::calculate_sha256(r_path) {
-                                if matches_hash(&h) {
-                                    valid_locally = true;
-                                    if !dest_cores.is_file() {
-                                        let _ = std::fs::copy(r_path, &dest_cores);
-                                    }
+                        if let Ok(h) = Self::calculate_sha256(r_path) {
+                            if matches_hash(&h) {
+                                valid_locally = true;
+                                if !dest_cores.is_file() {
+                                    let _ = std::fs::copy(r_path, &dest_cores);
                                 }
                             }
                         }
@@ -279,14 +276,11 @@ impl UpdaterService {
                 }
                 // 2. Check cores_dir
                 if !valid_locally && dest_cores.is_file() {
-                    let is_small_geosite = name == "geosite.dat" && dest_cores.metadata().map(|m| m.len() < 10 * 1024 * 1024).unwrap_or(false);
-                    if !is_small_geosite {
-                        if let Ok(h) = Self::calculate_sha256(&dest_cores) {
-                            if matches_hash(&h) {
-                                valid_locally = true;
-                                if let Some(ref r_path) = dest_runtime {
-                                    let _ = std::fs::copy(&dest_cores, r_path);
-                                }
+                    if let Ok(h) = Self::calculate_sha256(&dest_cores) {
+                        if matches_hash(&h) {
+                            valid_locally = true;
+                            if let Some(ref r_path) = dest_runtime {
+                                let _ = std::fs::copy(&dest_cores, r_path);
                             }
                         }
                     }
@@ -296,10 +290,6 @@ impl UpdaterService {
                     for cand in &candidate_dirs {
                         let cand_file = cand.join(name);
                         if cand_file.is_file() {
-                            let is_small_geosite = name == "geosite.dat" && cand_file.metadata().map(|m| m.len() < 10 * 1024 * 1024).unwrap_or(false);
-                            if is_small_geosite {
-                                continue;
-                            }
                             if let Ok(h) = Self::calculate_sha256(&cand_file) {
                                 if matches_hash(&h) {
                                     valid_locally = true;
@@ -310,7 +300,7 @@ impl UpdaterService {
                                     #[cfg(unix)]
                                     {
                                         use std::os::unix::fs::PermissionsExt;
-                                        if name == "xray" || name == "hysteria" {
+                                        if name == "sing-box" {
                                             if let Ok(meta) = std::fs::metadata(&dest_cores) {
                                                 let mut perms = meta.permissions();
                                                 perms.set_mode(0o755);
@@ -389,7 +379,7 @@ impl UpdaterService {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    if name == "xray" || name == "hysteria" {
+                    if name == "sing-box" {
                         if let Ok(meta) = std::fs::metadata(&dest_cores) {
                             let mut perms = meta.permissions();
                             perms.set_mode(0o755);
@@ -406,6 +396,29 @@ impl UpdaterService {
                 }
 
                 info!("Successfully verified and installed component: {}", name);
+            }
+        }
+
+        // Purge obsolete legacy core files from installation and runtime directories
+        let legacy_files = [
+            "xray.exe",
+            "xray",
+            "hysteria.exe",
+            "hysteria",
+            "geoip.dat",
+            "geosite.dat",
+            "xray_config.json",
+            "hysteria_config.yaml",
+        ];
+        for legacy in &legacy_files {
+            let _ = std::fs::remove_file(cores_dir.join(legacy));
+            if let Some(r_dir) = runtime_dir {
+                let _ = std::fs::remove_file(r_dir.join(legacy));
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let progdata = PathBuf::from(r"C:\ProgramData\BusterVPN\runtime").join(legacy);
+                let _ = std::fs::remove_file(progdata);
             }
         }
 
@@ -527,6 +540,9 @@ impl UpdaterService {
                 timeout /t 2 /nobreak >nul\r\n\
                 taskkill /F /PID {pid} >nul 2>&1\r\n\
                 xcopy /y /e \"{staging}\\*\" \"{target}\\\" >nul\r\n\
+                del /f /q \"{target}\\cores\\hysteria.exe\" \"{target}\\cores\\geoip.dat\" \"{target}\\cores\\geosite.dat\" >nul 2>&1\r\n\
+                del /f /q \"%LOCALAPPDATA%\\BusterVPN\\runtime\\hysteria.exe\" \"%LOCALAPPDATA%\\BusterVPN\\runtime\\geoip.dat\" \"%LOCALAPPDATA%\\BusterVPN\\runtime\\geosite.dat\" \"%LOCALAPPDATA%\\BusterVPN\\runtime\\hysteria_config.yaml\" >nul 2>&1\r\n\
+                del /f /q \"%PROGRAMDATA%\\BusterVPN\\runtime\\hysteria.exe\" \"%PROGRAMDATA%\\BusterVPN\\runtime\\geoip.dat\" \"%PROGRAMDATA%\\BusterVPN\\runtime\\geosite.dat\" >nul 2>&1\r\n\
                 start \"\" \"{exe}\"\r\n\
                 rd /s /q \"{staging}\"\r\n\
                 del \"%~f0\"\r\n",
@@ -568,6 +584,7 @@ impl UpdaterService {
                 sleep 2\n\
                 kill -9 {pid} 2>/dev/null || true\n\
                 cp -rf \"{staging}/.\" \"{target}/\"\n\
+                rm -f \"{target}/cores/xray\" \"{target}/cores/hysteria\" \"{target}/cores/geoip.dat\" \"{target}/cores/geosite.dat\"\n\
                 chmod +x \"{exe}\"\n\
                 nohup \"{exe}\" >/dev/null 2>&1 &\n\
                 rm -rf \"{staging}\"\n\
@@ -627,19 +644,20 @@ mod tests {
         #[cfg(target_os = "windows")]
         {
             assert_eq!(CORE_COMPONENTS.len(), 5);
+            assert!(CORE_COMPONENTS.contains(&"sing-box.exe"));
             assert!(CORE_COMPONENTS.contains(&"xray.exe"));
-            assert!(CORE_COMPONENTS.contains(&"hysteria.exe"));
             assert!(CORE_COMPONENTS.contains(&"wintun.dll"));
-            assert!(CORE_COMPONENTS.contains(&"geoip.dat"));
-            assert!(CORE_COMPONENTS.contains(&"geosite.dat"));
+            assert!(CORE_COMPONENTS.contains(&"geosite-ru.srs"));
+            assert!(CORE_COMPONENTS.contains(&"geoip-ru.srs"));
         }
         #[cfg(not(target_os = "windows"))]
         {
-            assert_eq!(CORE_COMPONENTS.len(), 4);
+            assert_eq!(CORE_COMPONENTS.len(), 5);
+            assert!(CORE_COMPONENTS.contains(&"sing-box"));
             assert!(CORE_COMPONENTS.contains(&"xray"));
-            assert!(CORE_COMPONENTS.contains(&"hysteria"));
-            assert!(CORE_COMPONENTS.contains(&"geoip.dat"));
-            assert!(CORE_COMPONENTS.contains(&"geosite.dat"));
+            assert!(CORE_COMPONENTS.contains(&"wintun.dll"));
+            assert!(CORE_COMPONENTS.contains(&"geosite-ru.srs"));
+            assert!(CORE_COMPONENTS.contains(&"geoip-ru.srs"));
         }
     }
 
@@ -660,8 +678,8 @@ mod tests {
 
     #[test]
     fn test_current_version() {
-        assert_eq!(CURRENT_VERSION, "1.4.0");
-        assert_eq!(parse_version_tuple(CURRENT_VERSION), Some((1, 4, 0)));
+        assert_eq!(CURRENT_VERSION, "1.5.0");
+        assert_eq!(parse_version_tuple(CURRENT_VERSION), Some((1, 5, 0)));
     }
 
     #[test]

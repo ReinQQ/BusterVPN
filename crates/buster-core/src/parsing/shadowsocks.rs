@@ -133,6 +133,7 @@ pub fn parse_shadowsocks(link: &str) -> Result<ParsedServer, ShadowsocksParseErr
         port,
         xray: Some(config),
         hysteria2: None,
+        ..Default::default()
     })
 }
 

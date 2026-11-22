@@ -9,16 +9,16 @@
 //! - Real-time stdout/stderr log capturing
 //! - Crash journal recording & startup recovery
 
-use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use chrono::{DateTime, Utc};
 use anyhow::{bail, Context, Result};
 
-use buster_core::config::hysteria_builder::{build_hysteria_config, HysteriaBuildParams};
-use buster_core::config::xray_builder::{build_xray_config_json, XrayBuildParams};
-use buster_core::models::{BackendKind, ConnectionStatus, ServerProfile};
+use buster_core::config::singbox_builder::{
+    build_singbox_config, build_xray_vless_detour_config_from_parsed, SingboxBuildParams,
+};
+use buster_core::models::{ConnectionStatus, ServerProfile, XrayProtocol};
 use buster_core::parsing::parse_share_link;
 
 use crate::models::AppSettings;
@@ -30,6 +30,7 @@ use buster_windows::{
     is_elevated, is_pid_running, proxy::SystemProxySettings, remove_server_bypass_route,
     resolve_server_ipv4, CoreProcessManager, FirewallKillSwitch, LogLine, NetworkMonitor,
     SafeJobObject, SessionJournal, SystemProxyManager, TunBypassRoute,
+    ipc::{BusterServiceClient, ConnectTunnelParams},
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -45,8 +46,10 @@ pub struct CoordinatorState {
     pub active_profile: Option<ServerProfile>,
     pub connected_at: Option<DateTime<Utc>>,
     pub active_core: Option<CoreProcessManager>,
+    pub sidecar_core: Option<CoreProcessManager>,
     pub active_bypass_route: Option<TunBypassRoute>,
     pub recent_logs: Vec<LogLine>,
+    pub using_service: bool,
 }
 
 pub struct SessionCoordinator {
@@ -77,8 +80,10 @@ impl SessionCoordinator {
             active_profile: None,
             connected_at: None,
             active_core: None,
+            sidecar_core: None,
             active_bypass_route: None,
             recent_logs: Vec::with_capacity(400),
+            using_service: false,
         }));
 
         Self {
@@ -146,6 +151,7 @@ impl SessionCoordinator {
             cores_dir.to_path_buf(),
             self.app_data_dir.join("cores"),
             PathBuf::from(r"C:\Program Files\BusterVPN\cores"),
+            PathBuf::from(r"C:\BUSTERVPN\antivpnv2\crates\buster-app\cores"),
             PathBuf::from(r"C:\BUSTERVPN\cores"),
             PathBuf::from(r"C:\BUSTERVPN"),
             PathBuf::from("/usr/lib/bustervpn/cores"),
@@ -154,73 +160,43 @@ impl SessionCoordinator {
 
         #[cfg(target_os = "windows")]
         let required_files = [
+            "sing-box.exe",
             "xray.exe",
-            "hysteria.exe",
             "wintun.dll",
-            "geoip.dat",
-            "geosite.dat",
+            "geosite-ru.srs",
+            "geoip-ru.srs",
         ];
 
         #[cfg(not(target_os = "windows"))]
         let required_files = [
+            "sing-box",
             "xray",
-            "hysteria",
-            "geoip.dat",
-            "geosite.dat",
+            "wintun.dll",
+            "geosite-ru.srs",
+            "geoip-ru.srs",
         ];
-
-        // Runtime Cache Cleaning: If geosite.dat in runtime_dir is smaller than 10MB or corrupted, remove it
-        let runtime_geosite = runtime_dir.join("geosite.dat");
-        if runtime_geosite.is_file() {
-            if let Ok(meta) = tokio::fs::metadata(&runtime_geosite).await {
-                if meta.len() < 10 * 1024 * 1024 {
-                    tracing::warn!(
-                        "Runtime geosite.dat is smaller than 10MB ({} bytes); removing corrupted/truncated cache",
-                        meta.len()
-                    );
-                    let _ = tokio::fs::remove_file(&runtime_geosite).await;
-                }
-            }
-        }
 
         for &file_name in &required_files {
             let target = runtime_dir.join(file_name);
-            let mut target_valid = target.is_file();
+            let target_len = target.metadata().map(|m| m.len()).unwrap_or(0);
 
-            // Verify geosite.dat size constraint
-            if file_name == "geosite.dat" && target_valid {
-                if let Ok(meta) = tokio::fs::metadata(&target).await {
-                    if meta.len() < 10 * 1024 * 1024 {
-                        target_valid = false;
-                        let _ = tokio::fs::remove_file(&target).await;
-                    }
-                }
-            }
-
-            // If target does not exist or is invalid, search candidate directories
-            if !target_valid {
-                for cand in &candidate_dirs {
-                    let src = cand.join(file_name);
-                    if src.is_file() {
-                        if file_name == "geosite.dat" {
-                            if let Ok(meta) = tokio::fs::metadata(&src).await {
-                                if meta.len() < 10 * 1024 * 1024 {
-                                    continue; // Skip small/truncated geosite.dat candidates
-                                }
-                            }
-                        }
-
+            for cand in &candidate_dirs {
+                let src = cand.join(file_name);
+                if src.is_file() {
+                    let src_len = src.metadata().map(|m| m.len()).unwrap_or(0);
+                    if target_len == 0 || target_len != src_len {
                         if let Ok(_) = tokio::fs::copy(&src, &target).await {
                             tracing::info!(
-                                "Copied runtime asset '{}' from {}",
+                                "Synchronized runtime asset '{}' ({} bytes) from {}",
                                 file_name,
+                                src_len,
                                 src.display()
                             );
 
                             #[cfg(unix)]
                             {
                                 use std::os::unix::fs::PermissionsExt;
-                                if file_name == "xray" || file_name == "hysteria" {
+                                if file_name == "sing-box" || file_name == "xray" {
                                     if let Ok(meta) = std::fs::metadata(&target) {
                                         let mut perms = meta.permissions();
                                         perms.set_mode(0o755);
@@ -228,26 +204,40 @@ impl SessionCoordinator {
                                     }
                                 }
                             }
-
-                            target_valid = true;
                             break;
                         }
+                    } else {
+                        break;
                     }
                 }
             }
         }
 
+        // Purge legacy core files from runtime directory if present
+        for legacy in &[
+            "hysteria.exe",
+            "hysteria",
+            "geoip.dat",
+            "geosite.dat",
+            "hysteria_config.yaml",
+        ] {
+            let p = runtime_dir.join(legacy);
+            if p.exists() {
+                let _ = tokio::fs::remove_file(p).await;
+            }
+        }
+
         // Check if any critical engine component is still missing in runtime_dir
         #[cfg(target_os = "windows")]
-        let critical_missing = !runtime_dir.join("xray.exe").is_file()
+        let critical_missing = !runtime_dir.join("sing-box.exe").is_file()
             || !runtime_dir.join("wintun.dll").is_file()
-            || !runtime_dir.join("geoip.dat").is_file()
-            || !runtime_dir.join("geosite.dat").is_file();
+            || !runtime_dir.join("geosite-ru.srs").is_file()
+            || !runtime_dir.join("geoip-ru.srs").is_file();
 
         #[cfg(not(target_os = "windows"))]
-        let critical_missing = !runtime_dir.join("xray").is_file()
-            || !runtime_dir.join("geoip.dat").is_file()
-            || !runtime_dir.join("geosite.dat").is_file();
+        let critical_missing = !runtime_dir.join("sing-box").is_file()
+            || !runtime_dir.join("geosite-ru.srs").is_file()
+            || !runtime_dir.join("geoip-ru.srs").is_file();
 
         if critical_missing {
             tracing::info!("Critical core assets missing in runtime dir; triggering updater sync...");
@@ -258,8 +248,135 @@ impl SessionCoordinator {
         Ok(())
     }
 
+    /// Ensures that the background Windows Service (BusterVPNService) is running.
+    pub async fn ensure_service_running() -> Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            use buster_windows::ipc::{BusterServiceClient, WindowsServiceManager, WindowsServiceState};
+
+            if BusterServiceClient::is_service_available().await {
+                return Ok(());
+            }
+
+            let scm_status = WindowsServiceManager::query_status();
+            match scm_status {
+                WindowsServiceState::Running => {
+                    for _ in 0..15 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                        if BusterServiceClient::is_service_available().await {
+                            return Ok(());
+                        }
+                    }
+                }
+                WindowsServiceState::Stopped
+                | WindowsServiceState::StartPending
+                | WindowsServiceState::StopPending
+                | WindowsServiceState::Other(_) => {
+                    tracing::info!("BusterVPNService is stopped in SCM. Attempting to start...");
+                    if WindowsServiceManager::start_service().is_err() {
+                        let _ = std::process::Command::new("sc.exe")
+                            .args(["start", "BusterVPNService"])
+                            .output();
+                    }
+                    for _ in 0..15 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                        if BusterServiceClient::is_service_available().await {
+                            tracing::info!("BusterVPNService started successfully");
+                            return Ok(());
+                        }
+                    }
+                }
+                WindowsServiceState::NotInstalled => {
+                    tracing::info!("BusterVPNService is not installed in SCM. Attempting registration...");
+                    let cur_exe = std::env::current_exe().unwrap_or_default();
+                    let cur_dir = cur_exe.parent().unwrap_or_else(|| Path::new("."));
+
+                    let service_candidates = [
+                        cur_dir.join("buster-service.exe"),
+                        PathBuf::from(r"C:\Program Files\BusterVPN\buster-service.exe"),
+                        PathBuf::from(r"C:\BUSTERVPN\antivpnv2\target\release\buster-service.exe"),
+                    ];
+                    let service_exe = service_candidates.into_iter().find(|p| p.is_file());
+
+                    let ctl_candidates = [
+                        cur_dir.join("busterctl.exe"),
+                        PathBuf::from(r"C:\Program Files\BusterVPN\busterctl.exe"),
+                        PathBuf::from(r"C:\BUSTERVPN\antivpnv2\target\release\busterctl.exe"),
+                    ];
+                    let ctl_exe = ctl_candidates.into_iter().find(|p| p.is_file());
+
+                    if let Some(ref svc) = service_exe {
+                        if WindowsServiceManager::install_service(svc).is_ok() {
+                            let _ = WindowsServiceManager::start_service();
+                        } else if let Some(ref ctl) = ctl_exe {
+                            let _ = std::process::Command::new("powershell.exe")
+                                .args([
+                                    "-NoProfile",
+                                    "-Command",
+                                    &format!("Start-Process -FilePath '{}' -ArgumentList 'service install' -Verb RunAs -Wait", ctl.display())
+                                ])
+                                .output();
+                            let _ = std::process::Command::new("powershell.exe")
+                                .args([
+                                    "-NoProfile",
+                                    "-Command",
+                                    &format!("Start-Process -FilePath '{}' -ArgumentList 'service start' -Verb RunAs -Wait", ctl.display())
+                                ])
+                                .output();
+                        }
+                    } else if let Some(ref ctl) = ctl_exe {
+                        let _ = std::process::Command::new("powershell.exe")
+                            .args([
+                                "-NoProfile",
+                                "-Command",
+                                &format!("Start-Process -FilePath '{}' -ArgumentList 'service install' -Verb RunAs -Wait", ctl.display())
+                            ])
+                            .output();
+                        let _ = std::process::Command::new("powershell.exe")
+                            .args([
+                                "-NoProfile",
+                                "-Command",
+                                &format!("Start-Process -FilePath '{}' -ArgumentList 'service start' -Verb RunAs -Wait", ctl.display())
+                            ])
+                            .output();
+                    }
+
+                    for _ in 0..15 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                        if BusterServiceClient::is_service_available().await {
+                            tracing::info!("BusterVPNService installed and running");
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
+            if BusterServiceClient::is_service_available().await {
+                Ok(())
+            } else {
+                tracing::warn!("Could not automatically start BusterVPNService Named Pipe server");
+                Ok(())
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(())
+        }
+    }
+
     /// Gets the current connection status.
     pub async fn get_status(&self) -> ConnectionStatus {
+        #[cfg(target_os = "windows")]
+        {
+            if self.state.lock().await.using_service {
+                if let Ok(rep) = BusterServiceClient::get_status().await {
+                    let mut st = self.state.lock().await;
+                    st.status = rep.status;
+                    return rep.status;
+                }
+            }
+        }
         self.state.lock().await.status
     }
 
@@ -270,6 +387,14 @@ impl SessionCoordinator {
 
     /// Gets recent log entries.
     pub async fn get_logs(&self) -> Vec<LogLine> {
+        #[cfg(target_os = "windows")]
+        {
+            if self.state.lock().await.using_service {
+                if let Ok(logs) = BusterServiceClient::get_logs().await {
+                    return logs;
+                }
+            }
+        }
         self.state.lock().await.recent_logs.clone()
     }
 
@@ -290,14 +415,28 @@ impl SessionCoordinator {
         st.active_profile = Some(profile.clone());
         drop(st);
 
-        if let Err(err) = self.do_connect(profile, settings, cores_dir).await {
+        #[cfg(target_os = "windows")]
+        let _ = Self::ensure_service_running().await;
+
+        #[cfg(target_os = "windows")]
+        let service_available = BusterServiceClient::is_service_available().await;
+        #[cfg(not(target_os = "windows"))]
+        let service_available = false;
+
+        let res = if service_available {
+            self.connect_via_service(profile, settings, cores_dir).await
+        } else {
+            self.do_connect(profile, settings, cores_dir).await
+        };
+
+        if let Err(err) = res {
             tracing::error!("Connection attempt failed: {}", err);
-            // Safe cleanup on failure
             self.do_disconnect().await;
             let mut st = self.state.lock().await;
             st.status = ConnectionStatus::Disconnected;
             st.active_profile = None;
             st.connected_at = None;
+            st.using_service = false;
             return Err(err);
         }
 
@@ -305,6 +444,146 @@ impl SessionCoordinator {
         st.status = ConnectionStatus::Connected;
         st.connected_at = Some(Utc::now());
         tracing::info!("VPN connection established to {}", profile.name);
+
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn connect_via_service(
+        &self,
+        profile: &ServerProfile,
+        settings: &AppSettings,
+        cores_dir: &Path,
+    ) -> Result<()> {
+        let routing_mode = settings.effective_routing_mode();
+
+        let raw_link = profile
+            .raw_link
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Profile '{}' has no raw share link payload", profile.name))?;
+        let parsed_server = parse_share_link(raw_link)
+            .context("Failed to parse server profile share link")?;
+
+        let ports = allocate_proxy_pair()
+            .context("Failed to allocate local proxy ports")?;
+
+        let server_host = profile
+            .host
+            .as_deref()
+            .or_else(|| parsed_server.host.as_deref())
+            .unwrap_or("127.0.0.1");
+
+        let server_ips = resolve_server_ipv4(server_host).unwrap_or_default();
+
+        let runtime_dir = self.app_data_dir.join("runtime");
+        let _ = self.prepare_runtime_assets(cores_dir, &runtime_dir).await;
+
+        let is_vless = parsed_server
+            .xray
+            .as_ref()
+            .map_or(false, |x| x.protocol == XrayProtocol::Vless);
+
+        let mut sidecar_config: Option<String> = None;
+        let mut sidecar_filename: Option<String> = None;
+        let mut sidecar_args: Option<Vec<String>> = None;
+
+        let mut params = SingboxBuildParams::new(&parsed_server, routing_mode);
+        params.socks_port = ports.socks_port;
+        params.http_port = ports.http_port;
+        params.bypass_local_networks = settings.bypass_local_networks;
+        params.block_quic = true;
+        params.routing_rules = &settings.routing_rules;
+        params.working_dir = Some(cores_dir);
+        params.split_tunneling = Some(settings.split_tunneling.clone());
+        params.dns_servers = Some(settings.dns_profile.dns_servers());
+        params.resolved_server_ips = Some(server_ips.clone());
+
+        if is_vless {
+            let xray_exists = runtime_dir.join("xray.exe").is_file()
+                || cores_dir.join("xray.exe").is_file()
+                || runtime_dir.join("xray").is_file()
+                || cores_dir.join("xray").is_file();
+            if xray_exists {
+                let detour_port = std::net::TcpListener::bind("127.0.0.1:0")
+                    .and_then(|l| l.local_addr().map(|a| a.port()))
+                    .unwrap_or(10810);
+                match build_xray_vless_detour_config_from_parsed(&parsed_server, detour_port) {
+                    Ok(xray_cfg) => {
+                        params.vless_socks_detour_port = Some(detour_port);
+                        let xray_cfg_file = runtime_dir.join("xray_detour_config.json");
+                        let _ = tokio::fs::write(&xray_cfg_file, &xray_cfg).await;
+                        let abs_xray_cfg = xray_cfg_file.canonicalize().unwrap_or(xray_cfg_file);
+                        let abs_xray_str = {
+                            let s = abs_xray_cfg.to_string_lossy().to_string();
+                            s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+                        };
+                        sidecar_config = Some(xray_cfg);
+                        sidecar_filename = Some("xray_detour_config.json".to_string());
+                        sidecar_args = Some(vec!["run".to_string(), "-c".to_string(), abs_xray_str]);
+                        tracing::info!("Configured Xray SOCKS5 detour on 127.0.0.1:{}", detour_port);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to build Xray VLESS detour config: {}", e);
+                    }
+                }
+            }
+        }
+
+        let config_json = build_singbox_config(&params)
+            .context("Failed to build Sing-box JSON configuration")?;
+
+        let config_file = runtime_dir.join("singbox_config.json");
+        tokio::fs::write(&config_file, &config_json).await?;
+        let abs_config = config_file.canonicalize().unwrap_or(config_file);
+        let abs_config_str = {
+            let s = abs_config.to_string_lossy().to_string();
+            s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+        };
+
+        let core_kind = "sing-box".to_string();
+        let config_filename = "singbox_config.json".to_string();
+        let core_args = vec![
+            "run".to_string(),
+            "-c".to_string(),
+            abs_config_str,
+        ];
+
+        let params = ConnectTunnelParams {
+            profile_name: profile.name.clone(),
+            core_kind,
+            config_content: config_json,
+            config_filename,
+            core_args,
+            server_host: server_host.to_string(),
+            server_ips,
+            dns_servers: settings.dns_profile.dns_servers(),
+            kill_switch: settings.kill_switch,
+            tun_enabled: routing_mode.has_tun(),
+            cores_dir: Some(cores_dir.to_string_lossy().to_string()),
+            sidecar_config,
+            sidecar_filename,
+            sidecar_args,
+        };
+
+        BusterServiceClient::connect_tunnel(params).await
+            .context("Failed to connect tunnel via BusterVPNService")?;
+
+        if routing_mode.has_system_proxy() {
+            self.proxy_manager
+                .enable(&SystemProxySettings {
+                    socks_port: Some(ports.socks_port),
+                    http_port: Some(ports.http_port),
+                    bypass_entries: vec![],
+                })
+                .context("Failed to configure Windows System Proxy in user session")?;
+        }
+
+        let mut st = self.state.lock().await;
+        st.using_service = true;
+        st.status = ConnectionStatus::Connected;
+        st.connected_at = Some(Utc::now());
+        drop(st);
+        tracing::info!("VPN connection established via service to {}", profile.name);
 
         Ok(())
     }
@@ -319,8 +598,8 @@ impl SessionCoordinator {
 
         // 1. Verify elevation if TUN mode is enabled
         #[cfg(target_os = "windows")]
-        if routing_mode.has_tun() && !is_elevated() {
-            bail!("TUN mode requires administrative privileges. Please run BusterVPN as Administrator.");
+        if (routing_mode.has_tun() || settings.kill_switch) && !is_elevated() {
+            bail!("Фоновая служба BusterVPNService не запущена. Для работы TUN и Kill Switch без прав администратора запустите службу BusterVPNService в Настройках или перезапустите приложение от имени администратора.");
         }
         #[cfg(not(target_os = "windows"))]
         if routing_mode.has_tun() && !is_elevated() {
@@ -348,11 +627,6 @@ impl SessionCoordinator {
 
         let server_ips = resolve_server_ipv4(server_host)
             .with_context(|| format!("Failed to resolve server hostname '{}'", server_host))?;
-
-        let resolved_ip: Ipv4Addr = server_ips
-            .first()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(Ipv4Addr::LOCALHOST);
 
         // 5. Install TUN server bypass route if TUN is enabled
         let mut bypass_route = None;
@@ -386,66 +660,104 @@ impl SessionCoordinator {
             let _ = buster_windows::dismantle_wintun_adapter(Some(&runtime_wintun));
         }
 
+        let singbox_name = if cfg!(target_os = "windows") { "sing-box.exe" } else { "sing-box" };
+
+        let is_vless = parsed_server
+            .xray
+            .as_ref()
+            .map_or(false, |x| x.protocol == XrayProtocol::Vless);
+
         let xray_name = if cfg!(target_os = "windows") { "xray.exe" } else { "xray" };
-        let hysteria_name = if cfg!(target_os = "windows") { "hysteria.exe" } else { "hysteria" };
-
-        let (core_exe, args) = match profile.backend {
-            BackendKind::Xray => {
-                let mut params = XrayBuildParams::new(&parsed_server, routing_mode, resolved_ip);
-                params.socks_port = ports.socks_port;
-                params.http_port = ports.http_port;
-                params.bypass_local_networks = settings.bypass_local_networks;
-                params.routing_rules = &settings.routing_rules;
-                params.working_dir = Some(&runtime_dir);
-                params.split_tunneling = Some(settings.split_tunneling.clone());
-                params.dns_servers = Some(settings.dns_profile.dns_servers());
-
-                let config_json = build_xray_config_json(&params)
-                    .context("Failed to build Xray JSON configuration")?;
-
-                let config_file = runtime_dir.join("xray_config.json");
-                tokio::fs::write(&config_file, config_json).await?;
-
-                let runtime_xray = runtime_dir.join(xray_name);
-                let exe = if runtime_xray.is_file() {
-                    runtime_xray
-                } else {
-                    cores_dir.join(xray_name)
-                };
-                let args = vec![
-                    "run".to_string(),
-                    "-c".to_string(),
-                    config_file.to_string_lossy().to_string(),
-                ];
-                (exe, args)
-            }
-            BackendKind::Hysteria2 => {
-                let mut params = HysteriaBuildParams::new(&parsed_server, routing_mode, &server_ips);
-                params.socks_port = ports.socks_port;
-                params.http_port = ports.http_port;
-                params.bypass_local_networks = settings.bypass_local_networks;
-                params.routing_rules = &settings.routing_rules;
-
-                let config_yaml = build_hysteria_config(&params)
-                    .context("Failed to build Hysteria2 YAML configuration")?;
-
-                let config_file = runtime_dir.join("hysteria_config.yaml");
-                tokio::fs::write(&config_file, config_yaml).await?;
-
-                let runtime_hysteria = runtime_dir.join(hysteria_name);
-                let exe = if runtime_hysteria.is_file() {
-                    runtime_hysteria
-                } else {
-                    cores_dir.join(hysteria_name)
-                };
-                let args = vec![
-                    "client".to_string(),
-                    "-c".to_string(),
-                    config_file.to_string_lossy().to_string(),
-                ];
-                (exe, args)
-            }
+        let runtime_xray = runtime_dir.join(xray_name);
+        let xray_exe = if runtime_xray.is_file() {
+            runtime_xray
+        } else {
+            cores_dir.join(xray_name)
         };
+
+        let mut sidecar_opt: Option<CoreProcessManager> = None;
+        let job = Arc::new(SafeJobObject::new().context("Failed to create SafeJobObject")?);
+
+        let mut params = SingboxBuildParams::new(&parsed_server, routing_mode);
+        params.socks_port = ports.socks_port;
+        params.http_port = ports.http_port;
+        params.bypass_local_networks = settings.bypass_local_networks;
+        params.block_quic = true;
+        params.routing_rules = &settings.routing_rules;
+        params.working_dir = Some(cores_dir);
+        params.split_tunneling = Some(settings.split_tunneling.clone());
+        params.dns_servers = Some(settings.dns_profile.dns_servers());
+        params.resolved_server_ips = Some(server_ips.clone());
+
+        if is_vless && xray_exe.is_file() {
+            let detour_port = std::net::TcpListener::bind("127.0.0.1:0")
+                .and_then(|l| l.local_addr().map(|a| a.port()))
+                .unwrap_or(10810);
+            match build_xray_vless_detour_config_from_parsed(&parsed_server, detour_port) {
+                Ok(xray_cfg) => {
+                    params.vless_socks_detour_port = Some(detour_port);
+                    let xray_cfg_file = runtime_dir.join("xray_detour_config.json");
+                    let _ = tokio::fs::write(&xray_cfg_file, &xray_cfg).await;
+                    let abs_xray_cfg = xray_cfg_file.canonicalize().unwrap_or(xray_cfg_file);
+                    let abs_xray_str = {
+                        let s = abs_xray_cfg.to_string_lossy().to_string();
+                        s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+                    };
+                    let sc_args = vec!["run".to_string(), "-c".to_string(), abs_xray_str];
+                    match CoreProcessManager::spawn_core_with_workdir(&xray_exe, sc_args, job.clone(), &runtime_dir) {
+                        Ok(mut sc) => {
+                            let sc_pid = sc.pid();
+                            let _ = self.session_journal.record(sc_pid, &xray_exe);
+                            let (sc_tx, mut sc_rx) = tokio::sync::mpsc::channel::<LogLine>(200);
+                            sc.start_log_streaming(sc_tx);
+
+                            let logs_state = self.state.clone();
+                            tokio::spawn(async move {
+                                while let Some(line) = sc_rx.recv().await {
+                                    let mut st = logs_state.lock().await;
+                                    if st.recent_logs.len() >= 400 {
+                                        st.recent_logs.remove(0);
+                                    }
+                                    st.recent_logs.push(line);
+                                }
+                            });
+                            tracing::info!("Spawned Xray sidecar detour (PID: {}) on 127.0.0.1:{}", sc_pid, detour_port);
+                            sidecar_opt = Some(sc);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to spawn Xray sidecar detour: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to build Xray VLESS detour config: {}", e);
+                }
+            }
+        }
+
+        let config_json = build_singbox_config(&params)
+            .context("Failed to build Sing-box JSON configuration")?;
+
+        let config_file = runtime_dir.join("singbox_config.json");
+        tokio::fs::write(&config_file, config_json).await?;
+        let abs_config = config_file.canonicalize().unwrap_or(config_file);
+        let abs_config_str = {
+            let s = abs_config.to_string_lossy().to_string();
+            s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+        };
+
+        let runtime_sb = runtime_dir.join(singbox_name);
+        let core_exe = if runtime_sb.is_file() {
+            runtime_sb
+        } else {
+            cores_dir.join(singbox_name)
+        };
+
+        let args = vec![
+            "run".to_string(),
+            "-c".to_string(),
+            abs_config_str,
+        ];
 
         #[cfg(unix)]
         {
@@ -458,8 +770,7 @@ impl SessionCoordinator {
         }
 
         // 7. Spawn core process bound to Win32 Job Object (Windows) or Process Group (Linux)
-        let job = Arc::new(SafeJobObject::new().context("Failed to create SafeJobObject")?);
-        let mut core = CoreProcessManager::spawn_core(&core_exe, args, job)
+        let mut core = CoreProcessManager::spawn_core_with_workdir(&core_exe, args, job, cores_dir)
             .with_context(|| format!("Failed to spawn core process at {}", core_exe.display()))?;
 
         // 8. Record active PID in crash journal
@@ -588,6 +899,7 @@ impl SessionCoordinator {
         // Store active core and bypass route in state
         let mut st = self.state.lock().await;
         st.active_core = Some(core);
+        st.sidecar_core = sidecar_opt;
         st.active_bypass_route = bypass_route;
 
         Ok(())
@@ -601,7 +913,25 @@ impl SessionCoordinator {
         }
 
         st.status = ConnectionStatus::Disconnecting;
+        let was_using_service = st.using_service;
         drop(st);
+
+        if was_using_service {
+            #[cfg(target_os = "windows")]
+            {
+                let proxy_journal = self.app_data_dir.join("proxy_journal.json");
+                let _ = buster_windows::disable_system_proxy(Some(&proxy_journal));
+                let _ = self.proxy_manager.disable();
+                let _ = BusterServiceClient::disconnect_tunnel().await;
+            }
+            let mut st = self.state.lock().await;
+            st.status = ConnectionStatus::Disconnected;
+            st.active_profile = None;
+            st.connected_at = None;
+            st.using_service = false;
+            tracing::info!("VPN session disconnected via BusterVPNService");
+            return Ok(());
+        }
 
         self.do_disconnect().await;
 
@@ -609,6 +939,7 @@ impl SessionCoordinator {
         st.status = ConnectionStatus::Disconnected;
         st.active_profile = None;
         st.connected_at = None;
+        st.using_service = false;
         tracing::info!("VPN session disconnected and system settings restored");
 
         Ok(())
@@ -641,7 +972,10 @@ impl SessionCoordinator {
         }
         st.active_bypass_route = None;
 
-        // 3. Core process termination (xray.exe / hysteria.exe bound to SafeJobObject)
+        // 3. Core process termination (sing-box.exe / xray.exe bound to SafeJobObject)
+        if let Some(mut sidecar) = st.sidecar_core.take() {
+            let _ = sidecar.terminate();
+        }
         if let Some(mut core) = st.active_core.take() {
             let _ = core.terminate();
         }

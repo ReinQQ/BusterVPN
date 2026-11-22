@@ -46,13 +46,21 @@ impl CoreProcessManager {
     pub fn spawn_core(
         exe_path: &Path,
         args: Vec<String>,
+        job: Arc<SafeJobObject>,
+    ) -> Result<Self> {
+        let working_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
+        Self::spawn_core_with_workdir(exe_path, args, job, working_dir)
+    }
+
+    pub fn spawn_core_with_workdir(
+        exe_path: &Path,
+        args: Vec<String>,
         _job: Arc<SafeJobObject>,
+        working_dir: &Path,
     ) -> Result<Self> {
         if !exe_path.exists() {
             bail!("Core executable not found at: {}", exe_path.display());
         }
-
-        let working_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
 
         let mut cmd = Command::new(exe_path);
         cmd.args(args)
@@ -82,9 +90,10 @@ impl CoreProcessManager {
         let pid = child.id().unwrap_or(0);
 
         tracing::info!(
-            "Successfully started Linux core '{}' (PID {}) in isolated process group with PR_SET_PDEATHSIG",
+            "Successfully started Linux core '{}' (PID {}) in working dir '{}' in isolated process group with PR_SET_PDEATHSIG",
             exe_path.display(),
-            pid
+            pid,
+            working_dir.display()
         );
 
         Ok(Self { child, pid })

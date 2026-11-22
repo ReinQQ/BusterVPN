@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 
 /// Backend core that owns the tunnel connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum BackendKind {
+    #[default]
     Xray,
     Hysteria2,
+    SingBox,
 }
 
 impl BackendKind {
@@ -13,8 +15,18 @@ impl BackendKind {
         match self {
             Self::Xray => "Xray",
             Self::Hysteria2 => "Hysteria 2",
+            Self::SingBox => "Sing-box",
         }
     }
+}
+
+/// Selected engine architecture mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum EngineMode {
+    #[default]
+    SingBox,
+    Classic,
 }
 
 /// How BusterVPN exposes the tunnel to Windows applications.
@@ -87,6 +99,10 @@ pub enum ServerProtocol {
     Trojan,
     Shadowsocks,
     Hysteria2,
+    Tuic,
+    WireGuard,
+    ShadowTls,
+    AnyTls,
 }
 
 /// Selectable accent gradient for the dark obsidian shell.

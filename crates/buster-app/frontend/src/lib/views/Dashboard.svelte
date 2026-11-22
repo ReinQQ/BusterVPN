@@ -7,11 +7,38 @@
   import { api } from '../api.js';
   import Toggle from '../components/Toggle.svelte';
   import { getFlagUrl, cleanServerName, extractCountryCode } from '../utils/country.js';
-  import { Power, ArrowDown, ArrowUp, Clock, Globe, Zap, RefreshCw, X, Download, Sparkles, Rocket, Cpu } from 'lucide-svelte';
+  import { checkWebRtcLeak } from '../leakCheck.js';
+  import { Power, ArrowDown, ArrowUp, Clock, Globe, Zap, RefreshCw, X, Download, Sparkles, Rocket, Cpu, Eye, EyeOff, ShieldCheck, ShieldAlert } from 'lucide-svelte';
 
   let { onNavigateToServers = () => {} } = $props();
 
   let isPinging = $state(false);
+  let isCheckingLeaks = $state(false);
+  let dnsLeak = $state(null);
+  let webrtcLeak = $state(null);
+  let hideIp = $state(
+    typeof window !== 'undefined' ? localStorage.getItem('bustervpn_hide_ip') === 'true' : false
+  );
+
+  function toggleHideIp() {
+    hideIp = !hideIp;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('bustervpn_hide_ip', String(hideIp));
+    }
+  }
+
+  function maskIp(ip) {
+    if (!ip) return '•••.•••.•••.•••';
+    const parts = ip.split('.');
+    if (parts.length === 4) {
+      return `${parts[0]}.${parts[1]}.xxx.xxx`;
+    }
+    if (ip.includes(':')) {
+      const v6 = ip.split(':');
+      return `${v6.slice(0, 2).join(':')}:****:****`;
+    }
+    return '•••.•••.•••.•••';
+  }
 
   function buildSparkline(history, key, width = 160, height = 36) {
     if (!history || history.length < 2) {
@@ -54,14 +81,35 @@
     return isRu ? "Защищенный туннель активен" : "Secure tunnel active";
   });
 
+  async function runLeakChecks(currentIp) {
+    isCheckingLeaks = true;
+    try {
+      const [dnsRes, webrtcRes] = await Promise.allSettled([
+        api.checkDnsLeak(),
+        checkWebRtcLeak(currentIp, 1200),
+      ]);
+      if (dnsRes.status === 'fulfilled') {
+        dnsLeak = dnsRes.value;
+      }
+      if (webrtcRes.status === 'fulfilled') {
+        webrtcLeak = webrtcRes.value;
+      }
+    } catch (_) {
+    } finally {
+      isCheckingLeaks = false;
+    }
+  }
+
   onMount(async () => {
-    vpnStore.refreshIpInfo();
+    const info = await vpnStore.refreshIpInfo();
+    await runLeakChecks(info?.ip || vpnStore.ipInfo?.ip);
   });
 
   async function handleToggleConnect() {
     try {
       await vpnStore.toggleConnect();
-      vpnStore.refreshIpInfo();
+      const info = await vpnStore.refreshIpInfo();
+      await runLeakChecks(info?.ip || vpnStore.ipInfo?.ip);
     } catch (e) {
       const errStr = e?.message || String(e || '');
       if (errStr.includes('NO_PROFILES_AVAILABLE') || errStr.toLowerCase().includes('no server profiles')) {
@@ -74,10 +122,14 @@
 
   async function handleRefreshIp() {
     isPinging = true;
-    await vpnStore.refreshIpInfo();
-    setTimeout(() => {
-      isPinging = false;
-    }, 600);
+    try {
+      const info = await vpnStore.refreshIpInfo();
+      await runLeakChecks(info?.ip || vpnStore.ipInfo?.ip);
+    } finally {
+      setTimeout(() => {
+        isPinging = false;
+      }, 300);
+    }
   }
 
   async function handleToggleTun(enabled) {
@@ -173,8 +225,8 @@
                 {displayName}
               </div>
               <div class="text-[11px] text-white/50 truncate flex items-center gap-1.5 mt-0.5">
-                <span class="uppercase text-[9px] px-1.5 py-0.2 rounded bg-white/10 font-mono text-white/70">
-                  {vpnStore.activeProfile.backend}
+                <span class="uppercase text-[9px] px-1.5 py-0.2 rounded bg-cyan-500/15 border border-cyan-500/30 font-mono text-cyan-300 font-bold">
+                  {vpnStore.activeProfile.protocol ? vpnStore.activeProfile.protocol.toUpperCase() : 'SING-BOX'}
                 </span>
                 <span class="font-mono text-[10.5px]">{vpnStore.activeProfile.host || '127.0.0.1'}:{vpnStore.activeProfile.port}</span>
               </div>
@@ -362,7 +414,7 @@
 
   <!-- Bottom: IP & Geolocation Bar -->
   <div class="rounded-2xl p-3 px-4 flex items-center justify-between bg-white/[0.03] border border-white/[0.08] shadow-lg transition-all duration-200 transform-gpu hover:border-white/20 hover:bg-white/[0.06] shrink-0">
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-3 min-w-0">
       <div class="w-8 h-8 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
         {#if getFlagUrl(vpnStore.ipInfo?.country_code)}
           <img src={getFlagUrl(vpnStore.ipInfo?.country_code)} alt={vpnStore.ipInfo?.country_code} class="w-5 h-3.5 object-cover rounded shadow-sm border border-white/10 shrink-0" />
@@ -370,14 +422,31 @@
           <Globe class="w-4 h-4 text-white/60" />
         {/if}
       </div>
-      <div>
+      <div class="min-w-0">
         <div class="flex items-center gap-2">
           <span class="text-[10px] text-white/40 font-semibold uppercase font-unbounded">{t('dash.external_ip')}</span>
           <span class="font-mono text-xs font-semibold text-white">
-            {vpnStore.ipInfo?.ip || t('dash.fetching')}
+            {#if hideIp}
+              {maskIp(vpnStore.ipInfo?.ip)}
+            {:else}
+              {vpnStore.ipInfo?.ip || t('dash.fetching')}
+            {/if}
           </span>
+          <button
+            type="button"
+            onclick={toggleHideIp}
+            class="p-1 rounded hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+            title={hideIp ? 'Показать IP (Режим стримера включен)' : 'Скрыть IP (Режим стримера)'}
+            aria-label="Toggle IP Masking"
+          >
+            {#if hideIp}
+              <EyeOff class="w-3.5 h-3.5 text-cyan-400" />
+            {:else}
+              <Eye class="w-3.5 h-3.5" />
+            {/if}
+          </button>
         </div>
-        <div class="text-[11px] text-white/60 flex items-center gap-2 mt-0.5">
+        <div class="text-[11px] text-white/60 flex items-center gap-2 mt-0.5 truncate">
           <span>{vpnStore.ipInfo?.country || t('dash.undefined')}</span>
           <span>•</span>
           <span>{vpnStore.ipInfo?.city || '—'}</span>
@@ -387,12 +456,34 @@
       </div>
     </div>
 
-    <button
-      onclick={handleRefreshIp}
-      aria-label={t('dash.refresh_ip')}
-      class="p-2 rounded-xl hover:bg-white/10 text-white/50 hover:text-white transition-colors"
-    >
-      <RefreshCw class="w-4 h-4 {isPinging ? 'animate-spin' : ''}" />
-    </button>
+    <div class="flex items-center gap-2 shrink-0">
+      {#if dnsLeak}
+        <span
+          class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono border font-medium transition-colors {dnsLeak.is_leaking ? 'bg-rose-500/10 text-rose-300 border-rose-500/30' : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'}"
+          title={dnsLeak.status_text}
+        >
+          <span class="w-1.5 h-1.5 rounded-full {dnsLeak.is_leaking ? 'bg-rose-400 animate-ping' : 'bg-emerald-400'}"></span>
+          DNS: {dnsLeak.is_leaking ? 'Утечка' : 'OK'}
+        </span>
+      {/if}
+      {#if webrtcLeak}
+        <span
+          class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[10px] font-mono border font-medium transition-colors {webrtcLeak.isLeaking ? 'bg-rose-500/10 text-rose-300 border-rose-500/30' : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'}"
+          title={webrtcLeak.statusText}
+        >
+          <span class="w-1.5 h-1.5 rounded-full {webrtcLeak.isLeaking ? 'bg-rose-400 animate-ping' : 'bg-emerald-400'}"></span>
+          WebRTC: {webrtcLeak.isLeaking ? 'Утечка' : 'OK'}
+        </span>
+      {/if}
+
+      <button
+        onclick={handleRefreshIp}
+        aria-label={t('dash.refresh_ip')}
+        class="p-2 rounded-xl hover:bg-white/10 text-white/50 hover:text-white transition-colors"
+        title="Обновить IP и проверить утечки"
+      >
+        <RefreshCw class="w-4 h-4 {isPinging || isCheckingLeaks ? 'animate-spin text-cyan-400' : ''}" />
+      </button>
+    </div>
   </div>
 </div>

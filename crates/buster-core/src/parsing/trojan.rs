@@ -143,6 +143,7 @@ pub fn parse_trojan(link: &str) -> Result<ParsedServer, TrojanParseError> {
         port,
         xray: Some(config),
         hysteria2: None,
+        ..Default::default()
     })
 }
 

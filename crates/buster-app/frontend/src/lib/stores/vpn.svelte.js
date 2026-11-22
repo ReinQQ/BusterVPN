@@ -181,8 +181,10 @@ class VpnStore {
   async refreshIpInfo() {
     try {
       this.ipInfo = await api.getIpInfo();
+      return this.ipInfo;
     } catch (e) {
       console.error('Failed to load IP info', e);
+      return null;
     }
   }
 

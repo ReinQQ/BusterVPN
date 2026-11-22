@@ -1,7 +1,9 @@
 pub mod hysteria_builder;
+pub mod singbox_builder;
 pub mod xray_builder;
 
 pub use hysteria_builder::*;
+pub use singbox_builder::*;
 pub use xray_builder::*;
 
 use thiserror::Error;
@@ -21,4 +23,6 @@ pub enum ConfigBuildError {
     Configuration(#[from] ConfigurationError),
     #[error("Serialization error: {0}")]
     Serialization(String),
+    #[error("Validation error: {0}")]
+    Validation(String),
 }

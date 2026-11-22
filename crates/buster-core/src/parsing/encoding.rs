@@ -31,10 +31,9 @@ pub fn try_decode_base64(input: &str) -> Option<String> {
     None
 }
 
-/// Percent-decodes a string, replacing '+' with ' ' for query strings.
+/// Percent-decodes a string, preserving '+' characters for base64 payloads and cryptographic keys.
 pub fn unescape_query_value(value: &str) -> String {
-    let with_spaces = value.replace('+', " ");
-    percent_decode_str(&with_spaces).decode_utf8_lossy().to_string()
+    percent_decode_str(value).decode_utf8_lossy().to_string()
 }
 
 /// Parses a query string (?a=b&c=d) while preserving the first duplicate value.

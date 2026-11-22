@@ -20,17 +20,48 @@
     Cpu,
     Download,
     CheckCircle2,
-    AlertTriangle
+    AlertTriangle,
+    Server,
   } from 'lucide-svelte';
 
   let isCheckingUpdate = $state(false);
   let isCheckingCores = $state(false);
   let isUpdatingCores = $state(false);
   let isApplyingUpdate = $state(false);
+  let isServiceOperating = $state(false);
+  let serviceStatus = $state({
+    installed: false,
+    running: false,
+    state_text: 'Подключение...',
+    auto_connect: false,
+  });
+
+  let serviceStatusBadge = $derived.by(() => {
+    if (serviceStatus.running) {
+      return { text: 'Активна', cls: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' };
+    }
+    if (!serviceStatus.installed) {
+      return { text: 'Требуется установка', cls: 'bg-rose-500/15 text-rose-300 border border-rose-500/30' };
+    }
+    return { text: 'Подключение...', cls: 'bg-amber-500/15 text-amber-300 border border-amber-500/30' };
+  });
+
   let clientUpdate = $derived(updateStore.clientUpdate);
   let coresReport = $derived(updateStore.coresReport);
 
+  async function refreshServiceStatus() {
+    try {
+      const res = await api.getServiceStatus();
+      if (res) {
+        serviceStatus = res;
+      }
+    } catch (e) {
+      console.warn('Failed to fetch service status:', e);
+    }
+  }
+
   onMount(async () => {
+    refreshServiceStatus();
     if (!updateStore.coresReport) {
       try {
         const report = await api.checkCores();
@@ -40,6 +71,34 @@
       }
     }
   });
+
+  async function handleManageService(action) {
+    isServiceOperating = true;
+    try {
+      const res = await api.manageService(action);
+      toast.success(res || 'Готово', 'Windows Service');
+      await refreshServiceStatus();
+    } catch (e) {
+      toast.error(e?.message || String(e || ''), 'Windows Service');
+    } finally {
+      isServiceOperating = false;
+    }
+  }
+
+  async function handleToggleServiceAutoConnect(enabled) {
+    const val = typeof enabled === 'boolean' ? enabled : enabled?.target?.checked;
+    serviceStatus.auto_connect = val;
+    if (vpnStore.settings) {
+      vpnStore.settings.auto_connect_service_boot = val;
+      await api.saveSettings(vpnStore.settings);
+    }
+    try {
+      await api.setServiceAutoConnect(val);
+      toast.info(val ? 'Автоподключение службы включено' : 'Автоподключение выключено', 'Windows Service');
+    } catch (e) {
+      toast.error(e?.message || String(e || ''), 'Windows Service');
+    }
+  }
 
   async function handleToggleKillSwitch(enabled) {
     if (!vpnStore.settings) return;
@@ -144,16 +203,18 @@
   function getCoreLabel(name) {
     const isRu = localeStore.current === 'ru';
     switch (name) {
-      case 'geosite.dat':
-        return isRu ? 'Маршрутизация доменов (.RU bypass)' : 'Domain Routing Database (.RU bypass)';
-      case 'geoip.dat':
-        return isRu ? 'База IP адресов (GeoIP)' : 'GeoIP Database';
+      case 'sing-box.exe':
+      case 'sing-box':
+        return isRu ? 'Универсальное ядро Sing-box (Все протоколы)' : 'Sing-box Universal Core (All Protocols)';
       case 'xray.exe':
-        return isRu ? 'Сетевое ядро Xray (VLESS / Reality / Trojan)' : 'Xray Network Core (VLESS / Reality / Trojan)';
-      case 'hysteria.exe':
-        return isRu ? 'Высокоскоростное UDP ядро (Hysteria 2)' : 'Hysteria 2 UDP Core';
+      case 'xray':
+        return isRu ? 'Сопроцессор Xray-core (VLESS Reality ML-KEM)' : 'Xray-core Sidecar (VLESS Reality ML-KEM)';
       case 'wintun.dll':
         return isRu ? 'Драйвер сетевого адаптера Wintun TUN' : 'Wintun TUN Adapter Driver';
+      case 'geosite-ru.srs':
+        return isRu ? 'Бинарный набор правил доменов (.srs .RU)' : 'Binary Domain Rule-Set (.srs .RU)';
+      case 'geoip-ru.srs':
+        return isRu ? 'Бинарный набор IP адресов (.srs GeoIP RU)' : 'Binary GeoIP Rule-Set (.srs GeoIP RU)';
       default:
         return isRu ? 'Компонент ядра BusterVPN' : 'BusterVPN Core Component';
     }
@@ -219,6 +280,56 @@
           {t('settings.lang_en')}
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- Section 0.5: Windows Background Service & Boot Auto-Connect -->
+  <div class="rounded-2xl p-4 bg-white/[0.03] border border-white/[0.08] shadow-lg transition-all duration-200 transform-gpu hover:border-white/20 hover:bg-white/[0.06] space-y-3.5">
+    <div class="flex items-start justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center shrink-0">
+          <Server class="w-5 h-5 text-indigo-400" />
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-unbounded font-semibold text-xs text-white">Фоновая служба Windows и автоподключение</span>
+            <span
+              class="text-[9px] uppercase px-2 py-0.5 rounded-full font-mono font-bold tracking-wider {serviceStatusBadge.cls}"
+            >
+              {serviceStatusBadge.text}
+            </span>
+          </div>
+          <div class="text-[11px] text-white/50 mt-0.5">
+            BusterVPNService управляет Wintun TUN, маршрутизацией и Kill Switch в фоновом режиме без UAC.
+          </div>
+        </div>
+      </div>
+
+      {#if !serviceStatus.installed}
+        <button
+          onclick={() => handleManageService('install')}
+          disabled={isServiceOperating}
+          class="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-unbounded text-xs font-semibold flex items-center gap-1 transition-all disabled:opacity-50"
+        >
+          <Download class="w-3.5 h-3.5" />
+          <span>Установить службу</span>
+        </button>
+      {/if}
+    </div>
+
+    <!-- Boot Auto-Connect Toggle -->
+    <div class="flex items-center justify-between py-1 border-t border-white/5 pt-2.5">
+      <div>
+        <div class="text-xs font-medium text-white">Автоподключение при старте Windows (до входа пользователя)</div>
+        <div class="text-[11px] text-white/40">
+          Служба автоматически поднимает VPN туннель при включении компьютера ещё до авторизации в Windows
+        </div>
+      </div>
+      <Toggle
+        checked={serviceStatus.auto_connect || vpnStore.settings?.auto_connect_service_boot}
+        onchange={handleToggleServiceAutoConnect}
+        ariaLabel="Boot Auto-Connect"
+      />
     </div>
   </div>
 
@@ -444,7 +555,7 @@
       <div>
         <div class="text-xs font-medium text-white flex items-center gap-2">
           <span class="font-unbounded font-semibold">{t('settings.client_info')}</span>
-          <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30">v1.4-release</span>
+          <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30">v1.5.0-release</span>
         </div>
         <div class="text-[11px] text-white/40 mt-0.5">Rust 1.85 • Tauri v2 • Svelte 5 • WinAPI Native Engine</div>
       </div>

@@ -1,12 +1,15 @@
 [workspace]
 members = [
     "crates/buster-core",
+    "crates/buster-windows",
+    "crates/buster-service",
+    "crates/buster-ctl",
     "crates/buster-app",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "1.4.0"
+version = "1.5.0"
 edition = "2021"
 authors = ["BusterVPN Team"]
 license = "MIT"
@@ -29,9 +32,11 @@ regex = "1.10"
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["default-tls", "json", "stream"] }
 windows = "0.58"
+windows-service = "0.8.0"
 winreg = "0.52"
 sha2 = "0.10"
 libc = "0.2"
+buster-core = { path = "crates/buster-core" }
 buster-windows = { path = "crates/buster-windows" }
 
 [profile.release]

@@ -2,12 +2,18 @@ pub mod enums;
 pub mod hysteria2;
 pub mod profile;
 pub mod routing;
+pub mod shadowtls;
+pub mod tuic;
+pub mod wireguard;
 pub mod xray;
 
 pub use enums::*;
 pub use hysteria2::*;
 pub use profile::*;
 pub use routing::*;
+pub use shadowtls::*;
+pub use tuic::*;
+pub use wireguard::*;
 pub use xray::*;
 
 use thiserror::Error;

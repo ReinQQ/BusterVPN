@@ -56,19 +56,52 @@
   Delete "$INSTDIR\hostfxr.dll"
   Delete "$INSTDIR\hostpolicy.dll"
   Delete "$INSTDIR\*.ico"
-  RMDir /r "$INSTDIR\cores"
+  Delete "$INSTDIR\cores\hysteria.exe"
+  Delete "$INSTDIR\cores\geoip.dat"
+  Delete "$INSTDIR\cores\geosite.dat"
+  Delete "$LOCALAPPDATA\BusterVPN\runtime\hysteria.exe"
+  Delete "$LOCALAPPDATA\BusterVPN\runtime\geoip.dat"
+  Delete "$LOCALAPPDATA\BusterVPN\runtime\geosite.dat"
+  Delete "$LOCALAPPDATA\BusterVPN\runtime\hysteria_config.yaml"
+  Delete "$COMMONAPPDATA\BusterVPN\runtime\hysteria.exe"
+  Delete "$COMMONAPPDATA\BusterVPN\runtime\geoip.dat"
+  Delete "$COMMONAPPDATA\BusterVPN\runtime\geosite.dat"
   RMDir /r "$INSTDIR\runtimes"
+!macroend
+
+!macro customPostInstall
+  ; 7. Register and start background service
+  ${If} ${FileExists} "$INSTDIR\buster-service.exe"
+    nsExec::Exec 'sc.exe create BusterVPNService binPath= "\"$INSTDIR\buster-service.exe\"" start= auto DisplayName= "BusterVPN Background Service"'
+    nsExec::Exec 'sc.exe start BusterVPNService'
+  ${EndIf}
+!macroend
+
+!macro customPreUnInstall
+  ; Stop and delete background service
+  nsExec::Exec 'sc.exe stop BusterVPNService'
+  nsExec::Exec 'sc.exe delete BusterVPNService'
+  nsExec::Exec 'taskkill /F /IM buster-service.exe /IM busterctl.exe /IM sing-box.exe /IM xray.exe /IM hysteria.exe /T'
 !macroend
 
 !macro customUnInstall
   ; Complete cleanup on uninstallation
   RMDir /r "$LOCALAPPDATA\BusterVPN"
   RMDir /r "$LOCALAPPDATA\app.bustervpn.client"
+  RMDir /r "$PROGRAMDATA\BusterVPN"
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro customInit
   !insertmacro customInstall
+!macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  !insertmacro customPostInstall
+!macroend
+
+!macro NSIS_HOOK_PREUNINSTALL
+  !insertmacro customPreUnInstall
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL

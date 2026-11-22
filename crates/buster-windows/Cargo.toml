@@ -11,6 +11,7 @@ tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+anyhow.workspace = true
 tracing.workspace = true
 winreg.workspace = true
 chrono.workspace = true
@@ -23,6 +24,9 @@ windows = { workspace = true, features = [
     "Win32_System_LibraryLoader",
     "Win32_Security",
     "Win32_Security_Cryptography",
+    "Win32_Security_Authorization",
+    "Win32_System_Pipes",
+    "Win32_System_Services",
     "Win32_NetworkManagement_WindowsFirewall",
     "Win32_System_Com",
     "Win32_NetworkManagement_IpHelper",
