@@ -10,7 +10,7 @@ use tracing::info;
 
 pub const PRIMARY_MANIFEST_URL: &str = "https://vpn.buster.gripe/updates/manifest.json";
 pub const FALLBACK_MANIFEST_URL: &str = "https://buster.gripe/updates/manifest.json";
-pub const CURRENT_VERSION: &str = "1.5.0";
+pub const CURRENT_VERSION: &str = "1.5.1";
 
 #[cfg(target_os = "windows")]
 pub const CORE_COMPONENTS: &[&str] = &[
@@ -92,7 +92,7 @@ impl UpdaterService {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(6))
-            .user_agent("BusterVPN-Updater/1.5.0")
+            .user_agent("BusterVPN-Updater/1.5.1")
             .build()
             .unwrap_or_default();
 
@@ -678,8 +678,8 @@ mod tests {
 
     #[test]
     fn test_current_version() {
-        assert_eq!(CURRENT_VERSION, "1.5.0");
-        assert_eq!(parse_version_tuple(CURRENT_VERSION), Some((1, 5, 0)));
+        assert_eq!(CURRENT_VERSION, "1.5.1");
+        assert_eq!(parse_version_tuple(CURRENT_VERSION), Some((1, 5, 1)));
     }
 
     #[test]

@@ -51,6 +51,6 @@
   <!-- Clean minimal bottom brand & version footer -->
   <div class="mt-auto pt-3 border-t border-white/5 relative z-10 px-2 flex items-center justify-between text-[10px] font-mono text-white/30 select-none">
     <span class="tracking-wider font-semibold">BUSTERVPN</span>
-    <span class="px-1.5 py-0.5 rounded bg-white/[0.04] text-[9px] font-medium text-white/40">v1.5.0</span>
+    <span class="px-1.5 py-0.5 rounded bg-white/[0.04] text-[9px] font-medium text-white/40">v1.5.1</span>
   </div>
 </aside>

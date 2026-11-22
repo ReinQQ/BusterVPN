@@ -28,8 +28,8 @@ class UpdateStore {
         this.clientUpdate = clientRes.value;
         const clean = (v) => (v || '').trim().replace(/^v/i, '').split('-')[0].trim();
         const latestClean = clean(clientRes.value.latest_version);
-        const currentClean = clean(clientRes.value.current_version) || '1.5.0';
-        const isCurrent = latestClean === currentClean || latestClean === '1.5.0';
+        const currentClean = clean(clientRes.value.current_version) || '1.5.1';
+        const isCurrent = latestClean === currentClean || latestClean === '1.5.1';
         if (clientRes.value.update_available && !isCurrent) {
           this.hasClientUpdate = true;
           this.clientVersion = clientRes.value.latest_version || '';
