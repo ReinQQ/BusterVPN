@@ -153,7 +153,7 @@
       if (res.hasClientUpdate) {
         toast.info(t('settings.client_new_version', { version: res.clientVersion }), 'Update');
       } else {
-        toast.success(`v${updateStore.clientUpdate?.current_version || '1.4.0'}`, 'Up to date');
+        toast.success(`v${updateStore.clientUpdate?.current_version || '1.5.0'}`, 'Up to date');
       }
     } catch (e) {
       toast.error(`${e?.message || e}`, 'Update Check');

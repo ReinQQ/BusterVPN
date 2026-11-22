@@ -7,7 +7,7 @@
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3.4-38B2AC.svg?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
 
-Desktop VPN client and process supervisor for Windows and Linux. Built with Rust, Tauri v2, Svelte 5, and Tailwind CSS. Supports Sing-box, Xray-core, and Hysteria 2 engines with kernel-level process containment and routing table management.
+Desktop VPN client and process supervisor for Windows and Linux. Built with Rust, Tauri v2, Svelte 5, and Tailwind CSS. Powered by a high-performance hybrid architecture: **Sing-box v1.14+** as the primary TUN, `.srs` routing, and multi-protocol engine, combined with an on-demand **Xray-core v26.11.9** local SOCKS5 sidecar for VLESS Reality post-quantum (`X25519MLKEM768`) handshakes.
 
 ---
 
@@ -17,12 +17,12 @@ BusterVPN decouples privileged network configuration from the unprivileged user 
 
 ```
 +------------------------------------------------------------------------+
-| User Session (Unprivileged)                                            |
+| User Session (Unprivileged - asInvoker)                                |
 |                                                                        |
 |  +---------------------------+       +------------------------------+  |
 |  |       buster-app          |       |          busterctl           |  |
 |  |  Tauri v2 + Svelte 5 GUI  |       |        CLI Utility           |  |
-|  | (asInvoker, no UAC popup) |       |  (status, connect, service)  |  |
+|  | (asInvoker, zero UAC)     |       |  (status, connect, service)  |  |
 |  +-------------+-------------+       +--------------+---------------+  |
 +----------------|------------------------------------|------------------+
                  | Named Pipe IPC                     |
@@ -38,20 +38,25 @@ BusterVPN decouples privileged network configuration from the unprivileged user 
 |  |  - Boot auto-connect tunnel (before user login)                  |  |
 |  +---------------------------------+--------------------------------+  |
 +------------------------------------|-----------------------------------+
-                                     | Supervises
+                                     | Supervises (SafeJobObject)
 +------------------------------------v-----------------------------------+
-| External Network Cores                                                 |
+| Network Engine Layer                                                   |
 |                                                                        |
-|  +--------------------+  +-------------------+  +-------------------+  |
-|  |    sing-box.exe    |  |     xray.exe      |  |   hysteria.exe    |  |
-|  | (.srs rule-sets,   |  | (VLESS Reality,   |  | (Port hopping,    |  |
-|  |  TUIC, WireGuard,  |  |  Trojan, VMess,   |  |  Salamander obfs, |  |
-|  |  ShadowTLS, AnyTLS)|  |  Shadowsocks)     |  |  Brutal CC)       |  |
-|  +--------------------+  +-------------------+  +-------------------+  |
+|  +------------------------------------------------------------------+  |
+|  |                    sing-box.exe (v1.14+)                         |  |
+|  |  Primary TUN Engine, .srs Rule-Sets, DNS Hijacking,              |  |
+|  |  Hysteria 2, TUIC v5, WireGuard, Trojan, SS, ShadowTLS, AnyTLS   |  |
+|  +---------------------------------+--------------------------------+  |
+|                                    | Detour on VLESS Reality (127.0.0.1:10810)
+|                                    v                                   |
+|  +------------------------------------------------------------------+  |
+|  |                    xray.exe (v26.11.9)                           |  |
+|  |  Local SOCKS5 Sidecar for Post-Quantum X25519MLKEM768 Reality   |  |
+|  +------------------------------------------------------------------+  |
 +------------------------------------------------------------------------+
 ```
 
-1. **`buster-service`**: Windows Service (`SERVICE_WIN32_OWN_PROCESS`) managing Wintun TUN interfaces, physical gateway discovery, static `/32` bypass routing, Windows Firewall rules, and core child processes inside Win32 Job Objects. Exposes a local Named Pipe IPC server (`\\.\pipe\BusterVPNService`) with permissions granted to Interactive and Authenticated Users. Supports auto-connecting the tunnel at system boot prior to user authentication.
+1. **`buster-service`**: Privileged Windows Service (`SERVICE_WIN32_OWN_PROCESS`) managing Wintun TUN interfaces, physical gateway discovery, static `/32` bypass routing, Windows Firewall rules, and core child processes inside Win32 Job Objects. Exposes a local Named Pipe IPC server (`\\.\pipe\BusterVPNService`) accessible without UAC prompts. Supports automatic tunnel connection at system boot prior to user login.
 2. **`buster-app`**: Tauri v2 desktop application running with standard user privileges (`asInvoker` in manifest). Delegates privileged routing, adapter, and firewall actions to `buster-service` via Named Pipe IPC when available; retains direct elevated fallback if the service is absent. Manages user-session WinINET proxy settings (`HKCU`).
 3. **`busterctl`**: Lightweight command-line utility communicating directly with `buster-service` over Named Pipe IPC for headless automation, scripting, and service lifecycle management (`status`, `connect`, `disconnect`, `logs`, `service install|uninstall|start|stop`).
 4. **`buster-core`**: Platform-agnostic configuration builder and link parser library supporting Sing-box JSON, Xray JSON, and Hysteria YAML formats.
@@ -59,21 +64,24 @@ BusterVPN decouples privileged network configuration from the unprivileged user 
 
 ---
 
-## Protocol and Core Support
+## Hybrid Engine & Protocol Support
 
-BusterVPN supports two operational engine configurations:
+BusterVPN v1.5.0 features an optimized hybrid engine combining `sing-box.exe` and `xray.exe`:
 
-### 1. Unified Sing-box Core (`sing-box.exe`)
-Handles all modern proxy protocols in a single executable using memory-efficient compiled `.srs` (`rule_set`) binary databases (`geosite-ru.srs`, `geoip-ru.srs`) instead of legacy `.dat` files:
-- **TUIC v5**: QUIC-based transport with congestion control selection (`bbr`, `cubic`), UUID/token authentication, and ALPN negotiation.
-- **WireGuard**: Native kernel-mode TUN or userspace driver configuration with private keys, peer endpoints, pre-shared keys, allowed IPs, and MTU tuning.
-- **ShadowTLS & AnyTLS**: Multi-stage TLS handshakes camouflaged behind legitimate third-party TLS servers.
-- **VLESS Reality / XTLS-Vision**: uTLS client fingerprinting (`chrome`, `safari`, `edge`), fallback SNI validation, and multiplexing.
-- **Hysteria 2**: UDP port-hopping ranges, Salamander obfuscation passwords, and upload/download bandwidth hints.
+### 1. Primary Engine: Sing-box Core (`sing-box.exe` v1.14+)
+Provides system-wide TUN routing and protocol handling using compiled `.srs` (`rule_set`) binary databases (`geosite-ru.srs`, `geoip-ru.srs`):
+- **Hysteria 2**: Native UDP port-hopping ranges, Salamander obfuscation, and bandwidth hints.
+- **TUIC v5**: QUIC transport with BBR/Cubic congestion control and ALPN negotiation.
+- **WireGuard**: Kernel-mode TUN endpoints with private keys, pre-shared keys, allowed IPs, and MTU tuning.
+- **ShadowTLS & AnyTLS**: Multi-stage TLS handshakes camouflaged behind legitimate third-party servers.
 - **Trojan, Shadowsocks (AEAD 2022 & legacy), VMess**.
+- **Leak-Free DNS**: System DNS hijacking with remote DoH/UDP resolver routing through proxy and domestic `.ru`/`.su` queries through local DNS.
 
-### 2. Classic Dual-Engine Core (`xray.exe` + `hysteria.exe`)
-Traditional setup pairing Xray-core for TCP/TLS transports with Hysteria 2 for high-loss UDP links, using `geosite.dat` and `geoip.dat`.
+### 2. Post-Quantum Sidecar: Xray-core (`xray.exe` v26.11.9)
+Modern Xray servers (v26.9.8+ / v26.11.9+) enforce hybrid post-quantum key exchange (`X25519MLKEM768`) in Reality ClientHello. Upstream `sing-box`'s uTLS fork strips ML-KEM extension groups, causing VLESS Reality handshakes to fail.
+- BusterVPN solves this seamlessly: when connecting to a VLESS Reality profile, the coordinator automatically writes a minimal standalone Xray config (zero `.dat` files and zero TUN needed) and launches `xray.exe` as a local SOCKS5 sidecar (`127.0.0.1:10810`) inside the same Win32 `SafeJobObject`.
+- `sing-box` routes the proxy traffic through this localhost detour while retaining exclusive ownership of the Wintun adapter, `.srs` routing rules, DNS hijacking, and Kill Switch protection.
+- All non-VLESS protocols connect directly through `sing-box.exe` in single-process mode.
 
 ---
 
@@ -86,13 +94,14 @@ Traditional setup pairing Xray-core for TCP/TLS transports with Hysteria 2 for h
 
 ---
 
-## Security and Containment
+## Security & Diagnostics
 
-- **Fail-Closed Windows Firewall Kill Switch**: Modifies Windows Filtering Platform rules via COM `INetFwPolicy2` to block outbound traffic by default, whitelisting only loopback, local subnet DHCP/DNS, core binaries, and pinned `/32` server IP destinations.
+- **Fail-Closed Windows Firewall Kill Switch**: Modifies Windows Filtering Platform rules via COM `INetFwPolicy2` to block outbound traffic by default, whitelisting only loopback (`127.0.0.1/8`), local subnet DHCP/DNS, core binaries, and pinned `/32` server IP destinations.
 - **Win32 Job Object Containment**: Subordinate core processes run inside a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Process termination of the parent or service guarantees immediate kernel-level termination of child core processes.
-- **DPAPI Credential Storage**: Profile configurations, private keys, and subscription links are encrypted at rest using Windows DPAPI (`CryptProtectData`) with purpose-specific entropy salts.
-- **Streamer IP Masking**: Interface toggle persists masked IP display state in `localStorage` to prevent accidental exposure during screenshots or live streaming.
-- **WebRTC & DNS Leak Verification**: Diagnostic routines evaluate active DNS resolvers and execute STUN ICE gathering (`stun:stun.l.google.com:19302`) to verify that no non-tunnel public IP addresses leak.
+- **DPAPI Credential Storage**: Profile configurations, private keys, and subscription links are encrypted at rest using Windows DPAPI (`CryptProtectData`) with purpose-bound entropy salts.
+- **Streamer IP Masking ("Eye" Toggle)**: Dashboard toggle persists masked IP display state in `localStorage` across restarts to prevent accidental exposure during screenshots or live streaming.
+- **WebRTC & DNS Leak Verification**: Fast concurrent diagnostic routines execute asynchronous STUN UDP probes (`stun.l.google.com:19302` / `stun1.l.google.com:19302`) with strict 1.2s timeouts and evaluate DNS resolvers to verify that no non-tunnel public IP addresses leak.
+- **Inline SVG Service Icons**: Crisp, lightweight vector icons for major services (YouTube, Telegram, Discord, Steam, OpenAI, Twitch, etc.) across routing rules and logs.
 
 ---
 
@@ -157,7 +166,7 @@ busterctl service uninstall
 4. **Package Tauri desktop application:**
    ```bash
    cd crates/buster-app
-   cargo tauri build
+   cargo tauri build --no-bundle
    ```
 
 Binary artifacts are output to `target/release/`:
