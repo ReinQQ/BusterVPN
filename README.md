@@ -21,12 +21,12 @@ BusterVPN decouples privileged network configuration from the unprivileged user 
 
 ```
 +------------------------------------------------------------------------+
-| User Session (Unprivileged - asInvoker)                                |
+| User Session (Elevated / requireAdministrator)                         |
 |                                                                        |
 |  +---------------------------+       +------------------------------+  |
 |  |       buster-app          |       |          busterctl           |  |
 |  |  Tauri v2 + Svelte 5 GUI  |       |        CLI Utility           |  |
-|  | (asInvoker, zero UAC)     |       |  (status, connect, service)  |  |
+|  |   (requireAdministrator)  |       |  (status, connect, service)  |  |
 |  +-------------+-------------+       +--------------+---------------+  |
 +----------------|------------------------------------|------------------+
                  | Named Pipe IPC                     |
@@ -61,7 +61,7 @@ BusterVPN decouples privileged network configuration from the unprivileged user 
 ```
 
 1. **`buster-service`**: Privileged Windows Service (`SERVICE_WIN32_OWN_PROCESS`) managing Wintun TUN interfaces, physical gateway discovery, static `/32` bypass routing, Windows Firewall rules, and core child processes inside Win32 Job Objects. Exposes a local Named Pipe IPC server (`\\.\pipe\BusterVPNService`) accessible without UAC prompts. Supports automatic tunnel connection at system boot prior to user login.
-2. **`buster-app`**: Tauri v2 desktop application running with standard user privileges (`asInvoker` in manifest). Delegates privileged routing, adapter, and firewall actions to `buster-service` via Named Pipe IPC when available; retains direct elevated fallback if the service is absent. Manages user-session WinINET proxy settings (`HKCU`).
+2. **`buster-app`**: Tauri v2 desktop application configured with `requireAdministrator` manifest. Delegates privileged routing, adapter, and firewall actions to `buster-service` via Named Pipe IPC when available; seamlessly handles local Wintun TUN, routing, and Kill Switch directly out-of-the-box if the background service is absent. Manages user-session WinINET proxy settings (`HKCU`).
 3. **`busterctl`**: Lightweight command-line utility communicating directly with `buster-service` over Named Pipe IPC for headless automation, scripting, and service lifecycle management (`status`, `connect`, `disconnect`, `logs`, `service install|uninstall|start|stop`).
 4. **`buster-core`**: Platform-agnostic configuration builder and link parser library supporting Sing-box JSON, Xray JSON, and Hysteria YAML formats.
 5. **`buster-windows`**: Native Windows API bindings for DPAPI encryption, Job Objects, routing tables, COM Windows Firewall, Named Pipe IPC, and Service Control Manager interactions.
@@ -191,7 +191,7 @@ antivpnv2/
 │   ├── buster-service/              # Background Windows Service binary (buster-service.exe)
 │   ├── buster-ctl/                  # CLI management tool (busterctl.exe)
 │   └── buster-app/                  # Tauri v2 desktop application
-│       ├── app.manifest             # asInvoker execution level manifest
+│       ├── app.manifest             # requireAdministrator application manifest
 │       ├── installer-hooks.nsi      # NSIS service installation hooks
 │       ├── src/                     # Tauri command handlers, AppState, SessionCoordinator
 │       └── frontend/                # Svelte 5 + Tailwind CSS web interface

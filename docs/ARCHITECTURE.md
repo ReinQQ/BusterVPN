@@ -8,7 +8,7 @@ This document defines the architectural contract, subsystem boundaries, IPC comm
 
 BusterVPN functions as a privileged networking engine and process supervisor for modern proxy protocols. The v1.5.0 architecture adheres to five core engineering principles:
 
-1. **Privilege Separation**: Unprivileged user interface processes (`buster-app.exe`) run with standard user privileges (`asInvoker` manifest) and never prompt for administrative elevation (UAC). All privileged network operations (Wintun TUN adapter creation, IP routing table modifications, Windows Filtering Platform firewall rules) reside in a dedicated background Windows Service (`BusterVPNService`).
+1. **Privilege Separation & Out-of-the-Box Elevation**: While a background Windows Service (`BusterVPNService`) is available for headless and boot-time operations, `buster-app.exe` specifies `requireAdministrator` in its application manifest, ensuring that TUN adapter management and Windows Filtering Platform rules operate immediately out-of-the-box without requiring service pre-installation.
 2. **Deterministic Process Containment**: Network core processes must never survive abnormal termination of the host process or a system crash. Process isolation is enforced via Win32 **Job Objects** configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
 3. **Fail-Closed Network Safety**: Outbound network traffic is protected by default-block Windows Firewall policies during tunnel activation, with strictly scoped allow rules for local loopback (`127.0.0.1/8`), local subnet DHCP/DNS, core binaries, and pinned `/32` server IP destinations.
 4. **Zero Route Looping**: The physical default gateway is identified prior to tunnel creation; a `/32` static host route is pinned to the physical interface so that encrypted uplink packets never route into the virtual Wintun TUN adapter.
@@ -22,7 +22,7 @@ The workspace contains five Rust crates and a Svelte 5 frontend:
 
 ```mermaid
 flowchart TB
-    subgraph UserSpace ["User Session (Standard User / asInvoker)"]
+    subgraph UserSpace ["User Session (requireAdministrator)"]
         subgraph GUI ["crates/buster-app (Tauri v2 + Svelte 5)"]
             UI["Svelte 5 Runes View Layer<br/>(Dashboard, Servers, Routing, Settings, Logs)"]
             CMD["Tauri IPC Commands<br/>(commands.rs)"]
@@ -96,7 +96,7 @@ The Windows Service creates the named pipe `\\.\pipe\BusterVPNService` using a p
 D:(A;;GRGW;;;WD)(A;;GRGW;;;IU)(A;;GRGW;;;AU)
 ```
 - `WD` (Everyone), `IU` (Interactive Users), and `AU` (Authenticated Users) receive `GENERIC_READ | GENERIC_WRITE`.
-- This architecture allows `buster-app.exe` (running without elevation under `asInvoker`) and `busterctl.exe` to configure network adapters, routing tables, and firewall policies without prompting the user for UAC credentials.
+- This architecture enables `busterctl.exe` and external tools to interact with the service over Named Pipe IPC, while `buster-app.exe` launches with `requireAdministrator` to ensure direct TUN/Kill Switch fallback capabilities when running standalone.
 
 ### 3.2 IPC Wire Protocol
 Communication utilizes length-prefixed JSON frames over the named pipe:
