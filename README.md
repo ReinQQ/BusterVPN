@@ -1,15 +1,19 @@
+﻿<div align="center">
+
 # BusterVPN
 
-[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg?style=flat-square)](Cargo.toml)
-[![Rust](https://img.shields.io/badge/Rust-2021_Edition-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
-[![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB.svg?style=flat-square&logo=tauri)](https://tauri.app/)
-[![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00.svg?style=flat-square&logo=svelte)](https://svelte.dev/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3.4-38B2AC.svg?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg?style=flat-square)](LICENSE)
+![Version](https://img.shields.io/badge/version-1.5.0-blue)
+![Rust](https://img.shields.io/badge/Rust-2021%20Edition-orange?logo=rust)
+![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB?logo=tauri)
+![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)
+![Tailwind](https://img.shields.io/badge/Tailwind%20CSS-3.4-38B2AC?logo=tailwind-css)
+![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20(x64)-0078D6?logo=windows)
+![License](https://img.shields.io/badge/License-MIT-green)
 
-Desktop VPN client and process supervisor for Windows and Linux. Built with Rust, Tauri v2, Svelte 5, and Tailwind CSS. Powered by a high-performance hybrid architecture: **Sing-box v1.14+** as the primary TUN, `.srs` routing, and multi-protocol engine, combined with an on-demand **Xray-core v26.11.9** local SOCKS5 sidecar for VLESS Reality post-quantum (`X25519MLKEM768`) handshakes.
+**Desktop VPN client and background process supervisor for Windows.**  
+Built with Rust, Tauri v2, Svelte 5, and Tailwind CSS. Powered by a high-performance hybrid architecture: **Sing-box v1.14+** as the primary TUN, `.srs` routing, and multi-protocol engine, combined with an on-demand **Xray-core v26.11.9** local SOCKS5 sidecar for VLESS Reality post-quantum (`X25519MLKEM768`) handshakes.
 
----
+</div>
 
 ## Architecture Overview (v1.5.0)
 
