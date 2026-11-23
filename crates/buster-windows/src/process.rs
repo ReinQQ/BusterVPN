@@ -1,6 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc::Sender;
@@ -10,7 +10,130 @@ use crate::error::WindowsError;
 use crate::job_object::SafeJobObject;
 use crate::log::{LogLine, LogStream};
 
-/// Manages the lifecycle of a child core process (Xray or Hysteria 2).
+const RUNTIME_ASSETS: [&str; 5] = [
+    "sing-box.exe",
+    "xray.exe",
+    "wintun.dll",
+    "geosite-ru.srs",
+    "geoip-ru.srs",
+];
+
+const LEGACY_RUNTIME_FILES: [&str; 4] = [
+    "hysteria.exe",
+    "geoip.dat",
+    "geosite.dat",
+    "hysteria_config.yaml",
+];
+
+const MAX_STDERR_LINES: usize = 50;
+
+/// Synchronizes core executables and routing databases into `runtime_dir`,
+/// checking `exe_dir/cores` first and then `extra_search_dirs`, and purges legacy files.
+pub fn sync_runtime_assets(
+    runtime_dir: &Path,
+    extra_search_dirs: &[PathBuf],
+) -> Result<(), WindowsError> {
+    std::fs::create_dir_all(runtime_dir)?;
+
+    let mut search_dirs = Vec::new();
+    if let Some(exe_cores) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("cores")))
+    {
+        search_dirs.push(exe_cores);
+    }
+    for dir in extra_search_dirs {
+        if !search_dirs.iter().any(|existing| existing == dir) {
+            search_dirs.push(dir.clone());
+        }
+    }
+
+    for asset in RUNTIME_ASSETS {
+        let dst = runtime_dir.join(asset);
+        let dst_len = dst.metadata().map(|m| m.len()).unwrap_or(0);
+        for cand in &search_dirs {
+            let src = cand.join(asset);
+            if src == dst || !src.is_file() {
+                continue;
+            }
+            let src_len = src.metadata().map(|m| m.len()).unwrap_or(0);
+            if dst_len == 0 || dst_len != src_len {
+                if std::fs::copy(&src, &dst).is_ok() {
+                    tracing::info!(
+                        "Synchronized runtime asset '{}' ({} bytes) from {}",
+                        asset,
+                        src_len,
+                        src.display()
+                    );
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    for legacy in LEGACY_RUNTIME_FILES {
+        let legacy_file = runtime_dir.join(legacy);
+        if legacy_file.exists() {
+            let _ = std::fs::remove_file(&legacy_file);
+        }
+    }
+
+    Ok(())
+}
+
+/// Polls `127.0.0.1:<port>` (up to 30 retries x 50ms) until `xray.exe` is listening,
+/// aborting immediately with captured stderr if the sidecar exits prematurely.
+pub async fn wait_for_sidecar_ready(
+    sidecar: &mut CoreProcessManager,
+    port: u16,
+) -> Result<(), WindowsError> {
+    let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+
+    for _ in 0..30 {
+        if let Ok(Some(status)) = sidecar.try_wait() {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            let stderr = sidecar.recent_stderr();
+            let msg = if stderr.is_empty() {
+                format!("xray.exe exited prematurely with status {}", status)
+            } else {
+                format!("xray.exe exited prematurely ({}): {}", status, stderr)
+            };
+            return Err(WindowsError::ProcessStart(msg));
+        }
+
+        let listening = tokio::task::spawn_blocking(move || {
+            std::net::TcpStream::connect_timeout(
+                &addr,
+                std::time::Duration::from_millis(50),
+            )
+            .is_ok()
+        })
+        .await
+        .unwrap_or(false);
+
+        if listening {
+            return Ok(());
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    let stderr = sidecar.recent_stderr();
+    let _ = sidecar.terminate();
+    let msg = if stderr.is_empty() {
+        format!("xray.exe did not start listening on 127.0.0.1:{} within timeout", port)
+    } else {
+        format!(
+            "xray.exe did not start listening on 127.0.0.1:{} within timeout: {}",
+            port, stderr
+        )
+    };
+    Err(WindowsError::ProcessStart(msg))
+}
+
+/// Manages the lifecycle of a child core process (`sing-box.exe` or `xray.exe`).
 ///
 /// Guaranteed safety invariants:
 /// 1. The process is spawned with `CREATE_NO_WINDOW` (never flashes a console window).
@@ -22,6 +145,7 @@ pub struct CoreProcessManager {
     child: Child,
     job: Arc<SafeJobObject>,
     pid: u32,
+    recent_stderr: Arc<StdMutex<Vec<String>>>,
 }
 
 impl CoreProcessManager {
@@ -87,7 +211,12 @@ impl CoreProcessManager {
             working_dir.display()
         );
 
-        Ok(Self { child, job, pid })
+        Ok(Self {
+            child,
+            job,
+            pid,
+            recent_stderr: Arc::new(StdMutex::new(Vec::new())),
+        })
     }
 
     /// Starts non-blocking asynchronous streaming of stdout and stderr into the provided channel.
@@ -107,9 +236,16 @@ impl CoreProcessManager {
 
         if let Some(stderr) = self.child.stderr.take() {
             let tx = sender;
+            let stderr_buf = self.recent_stderr.clone();
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
+                    if let Ok(mut buf) = stderr_buf.lock() {
+                        if buf.len() >= MAX_STDERR_LINES {
+                            buf.remove(0);
+                        }
+                        buf.push(line.clone());
+                    }
                     let log = LogLine::classify(line, LogStream::Stderr);
                     if tx.send(log).await.is_err() {
                         break;
@@ -119,45 +255,17 @@ impl CoreProcessManager {
         }
     }
 
-    /// Asynchronously streams stdout and stderr until the core exits, returning the exit status.
-    pub async fn stream_logs(&mut self, sender: Sender<LogLine>) -> Result<ExitStatus, WindowsError> {
-        let stdout = self.child.stdout.take();
-        let stderr = self.child.stderr.take();
+    /// Polls whether the child process has exited without blocking.
+    pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        self.child.try_wait()
+    }
 
-        let tx_out = sender.clone();
-        let stdout_task = tokio::spawn(async move {
-            if let Some(stdout) = stdout {
-                let mut lines = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    let log = LogLine::classify(line, LogStream::Stdout);
-                    if tx_out.send(log).await.is_err() {
-                        break;
-                    }
-                }
-            }
-        });
-
-        let tx_err = sender.clone();
-        let stderr_task = tokio::spawn(async move {
-            if let Some(stderr) = stderr {
-                let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    let log = LogLine::classify(line, LogStream::Stderr);
-                    if tx_err.send(log).await.is_err() {
-                        break;
-                    }
-                }
-            }
-        });
-
-        // Await process termination
-        let status = self.child.wait().await?;
-
-        // Wait for stdout/stderr readers to flush
-        let _ = tokio::join!(stdout_task, stderr_task);
-
-        tracing::info!("Core process (PID {}) exited with status: {}", self.pid, status);
-        Ok(status)
+    /// Returns captured recent stderr lines joined by newline.
+    pub fn recent_stderr(&self) -> String {
+        self.recent_stderr
+            .lock()
+            .map(|buf| buf.join("\n"))
+            .unwrap_or_default()
     }
 
     /// Forcibly terminates the core process tree.

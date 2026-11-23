@@ -1,7 +1,7 @@
 //! Application settings models and defaults.
 
 use buster_core::models::{
-    DnsProfile, EngineMode, RoutingMode, RoutingOptions, RoutingRule, SplitTunnelingConfig,
+    DnsProfile, RoutingMode, RoutingOptions, RoutingRule, SplitTunnelingConfig,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -52,9 +52,6 @@ pub struct AppSettings {
     pub last_profile_id: Option<Uuid>,
 
     #[serde(default)]
-    pub engine_mode: EngineMode,
-
-    #[serde(default)]
     pub auto_connect_service_boot: bool,
 
     #[serde(default = "Utc::now")]
@@ -94,7 +91,6 @@ impl Default for AppSettings {
             language: "ru".to_string(),
             accent_theme: "cyber-indigo".to_string(),
             last_profile_id: None,
-            engine_mode: EngineMode::SingBox,
             auto_connect_service_boot: false,
             updated_at_utc: Utc::now(),
         }

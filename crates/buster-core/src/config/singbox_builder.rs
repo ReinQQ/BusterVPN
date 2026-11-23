@@ -262,6 +262,12 @@ pub fn build_singbox_config(params: &SingboxBuildParams) -> Result<String, Confi
     }
 
     let mut rules = Vec::new();
+    if params.vless_socks_detour_port.is_some() {
+        rules.push(json!({
+            "process_name": ["xray.exe"],
+            "outbound": "direct"
+        }));
+    }
     rules.push(json!({ "action": "sniff" }));
     rules.push(json!({ "protocol": "dns", "action": "hijack-dns" }));
 
@@ -559,17 +565,21 @@ pub fn build_xray_vless_detour_config_from_parsed(server: &ParsedServer, socks_p
 fn build_proxy_outbound(params: &SingboxBuildParams) -> Result<Value, ConfigBuildError> {
     let server = params.server;
 
-    // SOCKS5 sidecar detour for VLESS Reality (bypassing upstream sing-box uTLS limitations with Xray 26.9.8+)
+    // Zero-fallback SOCKS5 sidecar detour for VLESS (requires xray.exe sidecar).
     if let Some(ref xray) = server.xray {
         if xray.protocol == XrayProtocol::Vless {
-            if let Some(socks_port) = params.vless_socks_detour_port {
-                return Ok(json!({
-                    "type": "socks",
-                    "tag": "proxy",
-                    "server": "127.0.0.1",
-                    "server_port": socks_port
-                }));
-            }
+            let socks_port = params.vless_socks_detour_port.ok_or_else(|| {
+                ConfigBuildError::Validation(
+                    "VLESS requires xray.exe SOCKS5 sidecar detour port".to_string(),
+                )
+            })?;
+            return Ok(json!({
+                "type": "socks",
+                "tag": "proxy",
+                "server": "127.0.0.1",
+                "server_port": socks_port,
+                "version": "5"
+            }));
         }
     }
     // 1. TUIC
@@ -697,80 +707,9 @@ fn build_proxy_outbound(params: &SingboxBuildParams) -> Result<Value, ConfigBuil
 
         match xray.protocol {
             XrayProtocol::Vless => {
-                map.insert("type".to_string(), json!("vless"));
-                map.insert("uuid".to_string(), json!(xray.credential));
-
-                if xray.transport == XrayTransport::Tcp
-                    && (xray.security == XraySecurity::Reality || xray.security == XraySecurity::Tls)
-                {
-                    if let Some(ref flow) = xray.flow {
-                        if !flow.trim().is_empty() {
-                            map.insert("flow".to_string(), json!(flow.trim()));
-                        }
-                    }
-                }
-
-                map.insert("packet_encoding".to_string(), json!("xudp"));
-
-                if xray.security == XraySecurity::Reality || xray.security == XraySecurity::Tls {
-                    let mut tls = Map::new();
-                    tls.insert("enabled".to_string(), json!(true));
-
-                    let sni = xray
-                        .sni
-                        .as_deref()
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or(&xray.host);
-                    tls.insert("server_name".to_string(), json!(sni));
-
-                    if xray.allow_insecure {
-                        tls.insert("insecure".to_string(), json!(true));
-                    }
-                    if !xray.alpn.is_empty() {
-                        tls.insert("alpn".to_string(), json!(xray.alpn));
-                    }
-
-                    if xray.security == XraySecurity::Reality {
-                        let pbk = xray
-                            .reality_public_key
-                            .as_deref()
-                            .filter(|s| !s.trim().is_empty())
-                            .ok_or_else(|| {
-                                ConfigBuildError::Validation(
-                                    "Reality outbound requires a non-empty public_key (pbk)".to_string(),
-                                )
-                            })?;
-
-                        let mut reality = Map::new();
-                        reality.insert("enabled".to_string(), json!(true));
-                        reality.insert("public_key".to_string(), json!(pbk));
-                        if let Some(ref sid) = xray.reality_short_id {
-                            if !sid.trim().is_empty() {
-                                reality.insert("short_id".to_string(), json!(sid));
-                            }
-                        }
-                        tls.insert("reality".to_string(), Value::Object(reality));
-
-                        let fp = xray
-                            .fingerprint
-                            .as_deref()
-                            .filter(|s| !s.trim().is_empty())
-                            .unwrap_or("chrome");
-                        let mut utls = Map::new();
-                        utls.insert("enabled".to_string(), json!(true));
-                        utls.insert("fingerprint".to_string(), json!(fp));
-                        tls.insert("utls".to_string(), Value::Object(utls));
-                    } else if let Some(ref fp) = xray.fingerprint {
-                        let mut utls = Map::new();
-                        utls.insert("enabled".to_string(), json!(true));
-                        utls.insert("fingerprint".to_string(), json!(fp));
-                        tls.insert("utls".to_string(), Value::Object(utls));
-                    }
-
-                    map.insert("tls".to_string(), Value::Object(tls));
-                }
-
-                insert_singbox_transport(&mut map, xray);
+                return Err(ConfigBuildError::Validation(
+                    "VLESS requires xray.exe SOCKS5 sidecar detour port".to_string(),
+                ));
             }
             XrayProtocol::Trojan => {
                 map.insert("type".to_string(), json!("trojan"));
@@ -878,6 +817,7 @@ mod tests {
         let mut params = SingboxBuildParams::new(&parsed, RoutingMode::Tun);
         params.bypass_local_networks = true;
         params.block_quic = true;
+        params.vless_socks_detour_port = Some(10810);
 
         let json_str = build_singbox_config(&params).expect("Build Sing-box JSON");
         let v: Value = serde_json::from_str(&json_str).expect("Valid JSON");
@@ -902,34 +842,34 @@ mod tests {
         assert_eq!(v["dns"]["final"], "remote");
         assert_eq!(v["dns"]["strategy"], "prefer_ipv4");
 
-        // Outbound checks: only proxy and direct (block and dns removed)
+        // Outbound checks: only proxy (SOCKS5 sidecar) and direct (block and dns removed)
         let outbounds = v["outbounds"].as_array().expect("Outbounds array");
         assert_eq!(outbounds.len(), 2);
         assert_eq!(outbounds[1]["type"], "direct");
         assert!(outbounds.iter().all(|o| o["type"] != "block" && o["type"] != "dns"));
 
         let proxy = &outbounds[0];
-        assert_eq!(proxy["type"], "vless");
-        assert_eq!(proxy["server"], "reality.example.com");
-        assert_eq!(proxy["server_port"], 443);
-        assert_eq!(proxy["uuid"], "11111111-1111-4111-8111-111111111111");
-        assert_eq!(proxy["flow"], "xtls-rprx-vision");
-        assert_eq!(proxy["tls"]["reality"]["enabled"], true);
-        assert_eq!(proxy["tls"]["utls"]["fingerprint"], "chrome");
+        assert_eq!(proxy["type"], "socks");
+        assert_eq!(proxy["tag"], "proxy");
+        assert_eq!(proxy["server"], "127.0.0.1");
+        assert_eq!(proxy["server_port"], 10810);
+        assert_eq!(proxy["version"], "5");
 
-        // Route checks (default_domain_resolver, modern actions)
+        // Route checks (xray.exe direct rule at top, default_domain_resolver, modern actions)
         assert_eq!(v["route"]["default_domain_resolver"], "local");
         assert_eq!(v["route"]["final"], "proxy");
-        assert_eq!(v["route"]["rules"][0]["action"], "sniff");
-        assert_eq!(v["route"]["rules"][1]["protocol"], "dns");
-        assert_eq!(v["route"]["rules"][1]["action"], "hijack-dns");
-        assert_eq!(v["route"]["rules"][2]["domain"][0], "reality.example.com");
-        assert_eq!(v["route"]["rules"][2]["outbound"], "direct");
-        assert_eq!(v["route"]["rules"][3]["action"], "reject");
-        assert_eq!(v["route"]["rules"][4]["network"], "udp");
-        assert_eq!(v["route"]["rules"][4]["outbound"], "proxy");
-        assert_eq!(v["route"]["rules"][5]["ip_is_private"], true);
-        assert_eq!(v["route"]["rules"][5]["outbound"], "direct");
+        assert_eq!(v["route"]["rules"][0]["process_name"], json!(["xray.exe"]));
+        assert_eq!(v["route"]["rules"][0]["outbound"], "direct");
+        assert_eq!(v["route"]["rules"][1]["action"], "sniff");
+        assert_eq!(v["route"]["rules"][2]["protocol"], "dns");
+        assert_eq!(v["route"]["rules"][2]["action"], "hijack-dns");
+        assert_eq!(v["route"]["rules"][3]["domain"][0], "reality.example.com");
+        assert_eq!(v["route"]["rules"][3]["outbound"], "direct");
+        assert_eq!(v["route"]["rules"][4]["action"], "reject");
+        assert_eq!(v["route"]["rules"][5]["network"], "udp");
+        assert_eq!(v["route"]["rules"][5]["outbound"], "proxy");
+        assert_eq!(v["route"]["rules"][6]["ip_is_private"], true);
+        assert_eq!(v["route"]["rules"][6]["outbound"], "direct");
     }
 
     #[test]
@@ -941,6 +881,7 @@ mod tests {
         params.bypass_local_networks = true;
         params.block_quic = true;
         params.resolved_server_ips = Some(vec!["93.184.216.34".to_string()]);
+        params.vless_socks_detour_port = Some(10810);
 
         let json_str = build_singbox_config(&params).expect("Build Sing-box JSON");
         let v: Value = serde_json::from_str(&json_str).expect("Valid JSON");
@@ -955,13 +896,15 @@ mod tests {
         assert_eq!(v["dns"]["servers"][1]["server"], "77.88.8.8");
         assert_eq!(v["dns"]["rules"][0]["domain"][0], "reality.example.com");
 
-        // Outbound TLS/Reality/uTLS checks
-        assert_eq!(v["outbounds"][0]["tls"]["server_name"], "www.apple.com");
+        // Xray sidecar Reality checks
+        let xray_str = build_xray_vless_detour_config_from_parsed(&parsed, 10810).expect("Build Xray detour");
+        let xv: Value = serde_json::from_str(&xray_str).expect("Valid Xray JSON");
+        assert_eq!(xv["outbounds"][0]["streamSettings"]["realitySettings"]["serverName"], "www.apple.com");
         assert_eq!(
-            v["outbounds"][0]["tls"]["reality"]["public_key"],
+            xv["outbounds"][0]["streamSettings"]["realitySettings"]["password"],
             "abcdef1234567890abcdef1234567890abcdef12345"
         );
-        assert_eq!(v["outbounds"][0]["tls"]["utls"]["fingerprint"], "chrome");
+        assert_eq!(xv["outbounds"][0]["streamSettings"]["realitySettings"]["fingerprint"], "chrome");
 
         // STUN UDP proxy route check
         let stun_rule = v["route"]["rules"]
@@ -974,7 +917,8 @@ mod tests {
                     && r.get("port") == Some(&json!([3478, 19302]))
             });
         assert!(stun_rule.is_some(), "STUN UDP route to proxy must be present");
-        assert_eq!(v["outbounds"][0]["packet_encoding"], "xudp");
+        assert_eq!(v["outbounds"][0]["type"], "socks");
+        assert_eq!(v["outbounds"][0]["version"], "5");
     }
 
     #[test]
@@ -987,30 +931,25 @@ mod tests {
         );
 
         let parsed = parse_share_link(&link).expect("Parse 3x-ui VLESS Reality");
-        let params = SingboxBuildParams::new(&parsed, RoutingMode::Tun);
+        let mut params = SingboxBuildParams::new(&parsed, RoutingMode::Tun);
+        params.vless_socks_detour_port = Some(10810);
         let json_str = build_singbox_config(&params).expect("Build sing-box config");
         let v: Value = serde_json::from_str(&json_str).expect("Valid JSON");
 
         let proxy = &v["outbounds"][0];
-        assert_eq!(proxy["type"], "vless");
-        assert_eq!(proxy["server"], "vpn.buster.gripe");
-        assert_eq!(proxy["server_port"], 443);
-        assert_eq!(proxy["flow"], "xtls-rprx-vision");
-        assert_eq!(proxy["packet_encoding"], "xudp");
+        assert_eq!(proxy["type"], "socks");
+        assert_eq!(proxy["server"], "127.0.0.1");
+        assert_eq!(proxy["server_port"], 10810);
+        assert_eq!(proxy["version"], "5");
 
-        let tls = &proxy["tls"];
-        assert_eq!(tls["enabled"], true);
-        assert_eq!(tls["server_name"], "github.com");
-        assert_ne!(tls["server_name"], "vpn.buster.gripe");
-
-        let reality = &tls["reality"];
-        assert_eq!(reality["enabled"], true);
-        assert_eq!(reality["public_key"], pbk);
-        assert_eq!(reality["short_id"], sid);
-
-        let utls = &tls["utls"];
-        assert_eq!(utls["enabled"], true);
-        assert_eq!(utls["fingerprint"], "chrome");
+        let xray_str = build_xray_vless_detour_config_from_parsed(&parsed, 10810).expect("Build Xray detour");
+        let xv: Value = serde_json::from_str(&xray_str).expect("Valid Xray JSON");
+        let reality = &xv["outbounds"][0]["streamSettings"]["realitySettings"];
+        assert_eq!(reality["serverName"], "github.com");
+        assert_ne!(reality["serverName"], "vpn.buster.gripe");
+        assert_eq!(reality["password"], pbk);
+        assert_eq!(reality["shortId"], sid);
+        assert_eq!(reality["fingerprint"], "chrome");
 
         // Verify DNS rule for VPN server host
         assert_eq!(v["dns"]["rules"][0]["domain"][0], "vpn.buster.gripe");
@@ -1025,6 +964,7 @@ mod tests {
         let mut params = SingboxBuildParams::new(&parsed, RoutingMode::Tun);
         let custom_dir = Path::new(r"C:\ProgramData\BusterVPN\runtime");
         params.working_dir = Some(custom_dir);
+        params.vless_socks_detour_port = Some(10810);
 
         let json_str = build_singbox_config(&params).expect("Build Sing-box JSON");
         let v: Value = serde_json::from_str(&json_str).expect("Valid JSON");
@@ -1102,6 +1042,9 @@ mod tests {
             params.bypass_local_networks = true;
             params.block_quic = true;
             params.working_dir = Some(cores_dir);
+            if parsed.xray.as_ref().map_or(false, |x| x.protocol == XrayProtocol::Vless) {
+                params.vless_socks_detour_port = Some(10810);
+            }
 
             let json_str = build_singbox_config(&params).expect(name);
             let config_file = temp_dir.join(format!("test_check_{}.json", name.replace(' ', "_")));
@@ -1129,7 +1072,7 @@ mod tests {
         let link = "vless://11111111-1111-4111-8111-111111111111@reality.example.com:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.apple.com&fp=chrome&pbk=abcdef1234567890abcdef1234567890abcdef12345&sid=1234#RealityTest";
         let parsed = parse_share_link(link).expect("Parse VLESS");
 
-        // 1. With detour port set
+        // 1. With detour port set: emits SOCKS5 outbound and xray.exe direct rule at top of route.rules
         let mut params = SingboxBuildParams::new(&parsed, RoutingMode::Tun);
         params.vless_socks_detour_port = Some(10810);
         let json_str = build_singbox_config(&params).expect("Build Sing-box JSON with detour");
@@ -1139,13 +1082,19 @@ mod tests {
         assert_eq!(proxy["tag"], "proxy");
         assert_eq!(proxy["server"], "127.0.0.1");
         assert_eq!(proxy["server_port"], 10810);
+        assert_eq!(proxy["version"], "5");
+        assert_eq!(v["route"]["rules"][0]["process_name"], json!(["xray.exe"]));
+        assert_eq!(v["route"]["rules"][0]["outbound"], "direct");
 
-        // 2. Without detour port (fallback to native VLESS)
-        let mut params_native = SingboxBuildParams::new(&parsed, RoutingMode::Tun);
-        params_native.vless_socks_detour_port = None;
-        let json_native = build_singbox_config(&params_native).expect("Build Sing-box JSON native");
-        let v_native: Value = serde_json::from_str(&json_native).expect("Valid JSON native");
-        assert_eq!(v_native["outbounds"][0]["type"], "vless");
+        // 2. Without detour port: returns explicit Err (zero fallback to native sing-box VLESS)
+        let mut params_no_detour = SingboxBuildParams::new(&parsed, RoutingMode::Tun);
+        params_no_detour.vless_socks_detour_port = None;
+        let err = build_singbox_config(&params_no_detour).expect_err("VLESS without detour port must fail");
+        assert!(
+            err.to_string().contains("VLESS requires xray.exe SOCKS5 sidecar detour port"),
+            "Unexpected error: {}",
+            err
+        );
     }
 
     #[test]

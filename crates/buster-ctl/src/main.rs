@@ -198,13 +198,20 @@ async fn cmd_connect(profile_target: Option<&str>) -> Result<()> {
     let host = parsed.host.clone().unwrap_or_else(|| "127.0.0.1".to_string());
     let server_ips = buster_windows::resolve_server_ipv4(&host).unwrap_or_default();
 
-    let candidate_cores_dirs = [
-        std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("cores"))),
-        Some(std::path::PathBuf::from(r"C:\Program Files\BusterVPN\cores")),
-        Some(std::path::PathBuf::from(r"C:\BUSTERVPN\antivpnv2\crates\buster-app\cores")),
-        Some(std::path::PathBuf::from(r"C:\ProgramData\BusterVPN\runtime")),
+    let runtime_dir = dirs_app_data().join("runtime");
+    let extra_search_dirs = vec![
+        PathBuf::from(r"C:\Program Files\BusterVPN\cores"),
+        PathBuf::from(r"C:\BUSTERVPN\antivpnv2\crates\buster-app\cores"),
+        PathBuf::from(r"C:\ProgramData\BusterVPN\runtime"),
     ];
-    let found_cores = candidate_cores_dirs.into_iter().flatten().find(|d| d.join("sing-box.exe").is_file());
+    buster_windows::sync_runtime_assets(&runtime_dir, &extra_search_dirs)
+        .context("Failed to synchronize runtime assets")?;
+
+    let found_cores = if runtime_dir.join("sing-box.exe").is_file() {
+        Some(runtime_dir.clone())
+    } else {
+        extra_search_dirs.into_iter().find(|d| d.join("sing-box.exe").is_file())
+    };
 
     let mut params = SingboxBuildParams::new(&parsed, RoutingMode::Tun);
     if let Some(ref cd) = found_cores {
@@ -221,13 +228,20 @@ async fn cmd_connect(profile_target: Option<&str>) -> Result<()> {
     let mut sidecar_args: Option<Vec<String>> = None;
 
     if is_vless {
-        let detour_port = 10810;
-        if let Ok(xray_cfg) = build_xray_vless_detour_config_from_parsed(&parsed, detour_port) {
-            params.vless_socks_detour_port = Some(detour_port);
-            sidecar_config = Some(xray_cfg);
-            sidecar_filename = Some("xray_detour_config.json".to_string());
-            sidecar_args = Some(vec!["run".to_string(), "-c".to_string(), "xray_detour_config.json".to_string()]);
+        if !runtime_dir.join("xray.exe").is_file() {
+            bail!("xray.exe missing in runtime directory");
         }
+        let detour_port = 10810;
+        let xray_cfg = build_xray_vless_detour_config_from_parsed(&parsed, detour_port)
+            .map_err(|e| anyhow::anyhow!("Failed to build Xray VLESS detour config: {}", e))?;
+        params.vless_socks_detour_port = Some(detour_port);
+        sidecar_config = Some(xray_cfg);
+        sidecar_filename = Some("xray_detour_config.json".to_string());
+        sidecar_args = Some(vec![
+            "run".to_string(),
+            "-c".to_string(),
+            "xray_detour_config.json".to_string(),
+        ]);
     }
 
     let config_content = build_singbox_config(&params)

@@ -46,7 +46,7 @@ let mockSettings = {
 };
 
 let mockLogs = [
-  { level: 'info', stream: 'stdout', text: 'BusterVPN Core v1.5.1 initialized on Windows 11', message: 'BusterVPN Core v1.5.1 initialized on Windows 11', timestamp: new Date().toISOString() },
+  { level: 'info', stream: 'stdout', text: 'BusterVPN Core v1.5.2 initialized on Windows 11', message: 'BusterVPN Core v1.5.2 initialized on Windows 11', timestamp: new Date().toISOString() },
   { level: 'info', stream: 'stdout', text: 'Safe Job Object limits applied: KILL_ON_JOB_CLOSE', message: 'Safe Job Object limits applied: KILL_ON_JOB_CLOSE', timestamp: new Date().toISOString() },
   { level: 'info', stream: 'stdout', text: 'Ready to connect. All route engines stand by.', message: 'Ready to connect. All route engines stand by.', timestamp: new Date().toISOString() },
 ];
@@ -182,11 +182,11 @@ function mockInvoke(cmd, args) {
           resolve({
             all_valid: true,
             items: [
+              { name: 'sing-box.exe', present: true, hash_matches: true, current_hash: 'e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce', expected_hash: 'e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce' },
               { name: 'xray.exe', present: true, hash_matches: true, current_hash: 'd5b558191cccb1e92a5772b68b8cab67717b26f634b0f15153215f65ae982a7e', expected_hash: 'd5b558191cccb1e92a5772b68b8cab67717b26f634b0f15153215f65ae982a7e' },
-              { name: 'hysteria.exe', present: true, hash_matches: true, current_hash: '162ef8fe55dc7ec810dda662908f8e65ec36bd6da39cb87c3bd66184ab68f067', expected_hash: '162ef8fe55dc7ec810dda662908f8e65ec36bd6da39cb87c3bd66184ab68f067' },
               { name: 'wintun.dll', present: true, hash_matches: true, current_hash: 'e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce', expected_hash: 'e5da8447dc2c320edc0fc52fa01885c103de8c118481f683643cacc3220dafce' },
-              { name: 'geoip.dat', present: true, hash_matches: true, current_hash: 'ce90dc02a81528109c99d769e1f8fe3071ded6b02a574f31e62d8f4eee312563', expected_hash: 'ce90dc02a81528109c99d769e1f8fe3071ded6b02a574f31e62d8f4eee312563' },
-              { name: 'geosite.dat', present: true, hash_matches: true, current_hash: '9ee94acb06e2f795831fb1589c0dc7af9242b0fb8d9196afd981b915b1097ed3', expected_hash: '9ee94acb06e2f795831fb1589c0dc7af9242b0fb8d9196afd981b915b1097ed3' },
+              { name: 'geosite-ru.srs', present: true, hash_matches: true, current_hash: '1e8a975a299059cbb79d0dd61af60b6e2fd5ff59223457a6b66797adcf49da3e', expected_hash: '1e8a975a299059cbb79d0dd61af60b6e2fd5ff59223457a6b66797adcf49da3e' },
+              { name: 'geoip-ru.srs', present: true, hash_matches: true, current_hash: 'e24dc7cc17aee4d935a2c9636bdc039845cbfc5d90022e6d51345dc81dcb8697', expected_hash: 'e24dc7cc17aee4d935a2c9636bdc039845cbfc5d90022e6d51345dc81dcb8697' },
             ],
             message: 'Все исполняемые ядра и базы маршрутизации проверены и соответствуют манифесту',
           });
@@ -194,8 +194,8 @@ function mockInvoke(cmd, args) {
         case 'check_update':
           resolve({
             update_available: false,
-            current_version: '1.5.1',
-            latest_version: '1.5.1',
+            current_version: '1.5.2',
+            latest_version: '1.5.2',
             download_url: null,
             release_notes: null,
           });

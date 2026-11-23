@@ -14,8 +14,9 @@ use buster_core::models::ConnectionStatus;
 use buster_windows::{
     add_server_bypass_route, apply_dns_servers, dismantle_wintun_adapter, find_physical_gateway,
     flush_dns_cache, remove_server_bypass_route, remove_virtual_tun_routes,
-    resolve_server_ipv4, CoreProcessManager, FirewallKillSwitch, LogLine, SafeJobObject,
-    SessionJournal, TunBypassRoute,
+    resolve_server_ipv4, sync_runtime_assets, wait_for_sidecar_ready, CoreProcessManager,
+    FirewallKillSwitch, LogLevel, LogLine, LogStream, SafeJobObject, SessionJournal,
+    TunBypassRoute,
 };
 use buster_windows::ipc::{
     ConnectTunnelParams, IpcRequest, IpcResponse, ServiceConfig, ServiceStatusReport,
@@ -122,7 +123,7 @@ impl ServiceContext {
 
     async fn do_connect(&self, params: ConnectTunnelParams) -> Result<()> {
         let mut st = self.state.lock().await;
-        if st.status == ConnectionStatus::Connected {
+        if st.status == ConnectionStatus::Connected || st.status == ConnectionStatus::Error {
             drop(st);
             self.do_disconnect().await;
             st = self.state.lock().await;
@@ -168,14 +169,10 @@ impl ServiceContext {
         let runtime_dir = self.program_data_dir.join("runtime");
         tokio::fs::create_dir_all(&runtime_dir).await?;
 
-        // 1. Resolve server host & bypass routes
+        // 1. Resolve server host & bypass routes (resolve_server_ipv4 flushes DNS cache first)
         let server_host = &params.server_host;
-        let mut server_ips = params.server_ips.clone();
-        if server_ips.is_empty() {
-            if let Ok(resolved) = resolve_server_ipv4(server_host) {
-                server_ips = resolved;
-            }
-        }
+        let server_ips = resolve_server_ipv4(server_host)
+            .unwrap_or_else(|_| params.server_ips.clone());
 
         if params.tun_enabled {
             let gateway = find_physical_gateway()
@@ -195,65 +192,23 @@ impl ServiceContext {
             s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
         };
 
-        // 3. Locate core binary and working directory
-        let candidate_cores_dirs = [
-            params.cores_dir.as_deref().map(PathBuf::from),
-            std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("cores"))),
-            std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())),
-            Some(PathBuf::from(r"C:\Program Files\BusterVPN\cores")),
-            Some(PathBuf::from(r"C:\BUSTERVPN\antivpnv2\crates\buster-app\cores")),
-            Some(PathBuf::from(r"C:\BUSTERVPN\cores")),
-        ];
-
-        // Ensure active assets (sing-box.exe, xray.exe, wintun.dll, geosite-ru.srs, geoip-ru.srs)
-        // are copied into runtime_dir (C:\ProgramData\BusterVPN\runtime) if missing or outdated
-        for asset in &["sing-box.exe", "xray.exe", "wintun.dll", "geosite-ru.srs", "geoip-ru.srs"] {
-            let dst = runtime_dir.join(asset);
-            let dst_len = dst.metadata().map(|m| m.len()).unwrap_or(0);
-            for cand in candidate_cores_dirs.iter().flatten() {
-                let src = cand.join(asset);
-                if src.is_file() {
-                    let src_len = src.metadata().map(|m| m.len()).unwrap_or(0);
-                    if dst_len == 0 || dst_len != src_len {
-                        if let Ok(_) = tokio::fs::copy(&src, &dst).await {
-                            info!("Synchronized runtime asset '{}' ({} bytes) from {}", asset, src_len, src.display());
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-            }
+        // 3. Synchronize runtime assets into C:\ProgramData\BusterVPN\runtime
+        let mut extra_search_dirs = Vec::new();
+        if let Some(ref dir) = params.cores_dir {
+            extra_search_dirs.push(PathBuf::from(dir));
         }
-
-        // Purge legacy core files from runtime directory if present
-        for legacy in &[
-            "hysteria.exe",
-            "geoip.dat",
-            "geosite.dat",
-            "hysteria_config.yaml",
-        ] {
-            let legacy_file = runtime_dir.join(legacy);
-            if legacy_file.exists() {
-                let _ = tokio::fs::remove_file(&legacy_file).await;
-            }
+        if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+            extra_search_dirs.push(exe_dir);
         }
+        extra_search_dirs.push(PathBuf::from(r"C:\Program Files\BusterVPN\cores"));
+        extra_search_dirs.push(PathBuf::from(r"C:\BUSTERVPN\antivpnv2\crates\buster-app\cores"));
+        extra_search_dirs.push(PathBuf::from(r"C:\BUSTERVPN\cores"));
 
-        let core_exe = if runtime_dir.join("sing-box.exe").is_file() {
-            runtime_dir.join("sing-box.exe")
-        } else if let Some(cand) = candidate_cores_dirs.iter().flatten().find(|d| d.join("sing-box.exe").is_file()) {
-            cand.join("sing-box.exe")
-        } else {
-            runtime_dir.join("sing-box.exe")
-        };
+        sync_runtime_assets(&runtime_dir, &extra_search_dirs)
+            .context("Failed to synchronize runtime assets")?;
 
-        let working_dir = if runtime_dir.join("geosite-ru.srs").is_file() {
-            runtime_dir.clone()
-        } else if let Some(cand) = candidate_cores_dirs.iter().flatten().find(|d| d.join("geosite-ru.srs").is_file()) {
-            cand.clone()
-        } else {
-            runtime_dir.clone()
-        };
+        let core_exe = runtime_dir.join("sing-box.exe");
+        let working_dir = runtime_dir.clone();
 
         if !core_exe.is_file() {
             bail!("Core binary 'sing-box.exe' not found at {}", core_exe.display());
@@ -261,10 +216,9 @@ impl ServiceContext {
 
         // 4. Dismantle stale Wintun if TUN enabled
         if params.tun_enabled {
-            let target_wintun = if runtime_dir.join("wintun.dll").is_file() {
-                Some(runtime_dir.join("wintun.dll"))
-            } else if working_dir.join("wintun.dll").is_file() {
-                Some(working_dir.join("wintun.dll"))
+            let runtime_wintun = runtime_dir.join("wintun.dll");
+            let target_wintun = if runtime_wintun.is_file() {
+                Some(runtime_wintun)
             } else {
                 None
             };
@@ -279,12 +233,23 @@ impl ServiceContext {
             }
         }
 
-        // 5. Spawn core bound to SafeJobObject with working_dir set to cores_dir
+        // 5. Spawn core bound to SafeJobObject with working_dir set to runtime_dir
         let job = Arc::new(SafeJobObject::new().context("Failed to create SafeJobObject")?);
 
-        // 5a. If sidecar config is present, spawn sidecar core (xray.exe) bound to the same SafeJobObject
+        // 5a. If sidecar config is present, fail fast if xray.exe is missing and verify port readiness before starting sing-box.exe
         let mut sidecar_opt: Option<CoreProcessManager> = None;
         if let Some(ref sidecar_cfg) = params.sidecar_config {
+            let xray_exe = runtime_dir.join("xray.exe");
+            if !xray_exe.is_file() {
+                bail!("xray.exe missing in runtime directory");
+            }
+
+            let sidecar_port = serde_json::from_str::<serde_json::Value>(sidecar_cfg)
+                .ok()
+                .and_then(|v| v["inbounds"][0]["port"].as_u64())
+                .and_then(|p| u16::try_from(p).ok())
+                .context("Sidecar config is missing a valid inbounds[0].port")?;
+
             let sidecar_filename = params
                 .sidecar_filename
                 .as_deref()
@@ -294,51 +259,51 @@ impl ServiceContext {
                 .await
                 .with_context(|| format!("Failed to write sidecar config to {}", sidecar_config_path.display()))?;
 
-            let abs_sidecar_cfg = sidecar_config_path.canonicalize().unwrap_or(sidecar_config_path.clone());
+            let abs_sidecar_cfg = sidecar_config_path.canonicalize().unwrap_or(sidecar_config_path);
             let abs_sidecar_str = {
                 let s = abs_sidecar_cfg.to_string_lossy().to_string();
                 s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
             };
 
-            let xray_exe = if runtime_dir.join("xray.exe").is_file() {
-                runtime_dir.join("xray.exe")
-            } else if let Some(cand) = candidate_cores_dirs.iter().flatten().find(|d| d.join("xray.exe").is_file()) {
-                cand.join("xray.exe")
-            } else {
-                runtime_dir.join("xray.exe")
-            };
-
-            if xray_exe.is_file() {
-                let sidecar_args = params.sidecar_args.clone().unwrap_or_else(|| {
-                    vec!["run".to_string(), "-c".to_string(), abs_sidecar_str]
-                });
-                match CoreProcessManager::spawn_core_with_workdir(&xray_exe, sidecar_args, job.clone(), &runtime_dir) {
-                    Ok(mut sc) => {
-                        let sc_pid = sc.pid();
-                        let _ = self.session_journal.record(sc_pid, &xray_exe);
-                        let (sc_tx, mut sc_rx) = tokio::sync::mpsc::channel::<LogLine>(200);
-                        sc.start_log_streaming(sc_tx);
-
-                        let state_clone = self.state.clone();
-                        tokio::spawn(async move {
-                            while let Some(line) = sc_rx.recv().await {
-                                let mut st = state_clone.lock().await;
-                                if st.recent_logs.len() >= 400 {
-                                    st.recent_logs.remove(0);
-                                }
-                                st.recent_logs.push(line);
-                            }
-                        });
-                        info!("Spawned xray.exe sidecar detour (PID: {}) bound to SafeJobObject", sc_pid);
-                        sidecar_opt = Some(sc);
-                    }
-                    Err(e) => {
-                        warn!("Failed to spawn xray.exe sidecar detour: {}", e);
-                    }
+            let mut sidecar_args = params.sidecar_args.clone().unwrap_or_else(|| {
+                vec!["run".to_string(), "-c".to_string(), abs_sidecar_str.clone()]
+            });
+            if let Some(pos) = sidecar_args.iter().position(|a| a == "-c") {
+                if pos + 1 < sidecar_args.len() {
+                    sidecar_args[pos + 1] = abs_sidecar_str;
                 }
-            } else {
-                warn!("xray.exe binary not found at {}", xray_exe.display());
             }
+
+            let mut sc = CoreProcessManager::spawn_core_with_workdir(
+                &xray_exe,
+                sidecar_args,
+                job.clone(),
+                &runtime_dir,
+            )
+            .context("Failed to spawn xray.exe sidecar detour")?;
+
+            let sc_pid = sc.pid();
+            let _ = self.session_journal.record(sc_pid, &xray_exe);
+            let (sc_tx, mut sc_rx) = tokio::sync::mpsc::channel::<LogLine>(200);
+            sc.start_log_streaming(sc_tx);
+
+            let state_clone = self.state.clone();
+            tokio::spawn(async move {
+                while let Some(line) = sc_rx.recv().await {
+                    let mut st = state_clone.lock().await;
+                    if st.recent_logs.len() >= 400 {
+                        st.recent_logs.remove(0);
+                    }
+                    st.recent_logs.push(line);
+                }
+            });
+
+            wait_for_sidecar_ready(&mut sc, sidecar_port)
+                .await
+                .context("xray.exe sidecar failed readiness check")?;
+
+            info!("Spawned xray.exe sidecar detour (PID: {}) listening on 127.0.0.1:{}", sc_pid, sidecar_port);
+            sidecar_opt = Some(sc);
         }
 
         let mut core = CoreProcessManager::spawn_core_with_workdir(&core_exe, core_args, job, &working_dir)
@@ -389,12 +354,110 @@ impl ServiceContext {
             }
         });
 
+        // 9. Child Process Watchdog: monitors both sing-box.exe and xray.exe child handles
+        let watchdog_ctx = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let st = watchdog_ctx.state.lock().await;
+                match st.status {
+                    ConnectionStatus::Connecting => continue,
+                    ConnectionStatus::Connected => break,
+                    _ => return,
+                }
+            }
+
+            loop {
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+                let crash_report: Option<(String, String)> = {
+                    let mut st = watchdog_ctx.state.lock().await;
+                    if st.status != ConnectionStatus::Connected {
+                        return;
+                    }
+
+                    let mut crashed: Option<(String, String)> = None;
+                    if let Some(ref mut core) = st.core_process {
+                        match core.try_wait() {
+                            Ok(Some(status)) => {
+                                crashed = Some((
+                                    format!("sing-box.exe (PID {}) exited unexpectedly with {}", core.pid(), status),
+                                    core.recent_stderr(),
+                                ));
+                            }
+                            Ok(None) => {}
+                            Err(e) => {
+                                crashed = Some((
+                                    format!("sing-box.exe (PID {}) handle check failed: {}", core.pid(), e),
+                                    core.recent_stderr(),
+                                ));
+                            }
+                        }
+                    }
+                    if crashed.is_none() {
+                        if let Some(ref mut sidecar) = st.sidecar_process {
+                            match sidecar.try_wait() {
+                                Ok(Some(status)) => {
+                                    crashed = Some((
+                                        format!("xray.exe (PID {}) exited unexpectedly with {}", sidecar.pid(), status),
+                                        sidecar.recent_stderr(),
+                                    ));
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    crashed = Some((
+                                        format!("xray.exe (PID {}) handle check failed: {}", sidecar.pid(), e),
+                                        sidecar.recent_stderr(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some((ref reason, ref stderr)) = crashed {
+                        if st.recent_logs.len() >= 400 {
+                            st.recent_logs.remove(0);
+                        }
+                        let msg = if stderr.is_empty() {
+                            reason.clone()
+                        } else {
+                            format!("{} | stderr: {}", reason, stderr)
+                        };
+                        st.recent_logs.push(LogLine {
+                            timestamp: Utc::now(),
+                            level: LogLevel::Error,
+                            stream: LogStream::Stderr,
+                            text: msg,
+                        });
+                    }
+                    crashed
+                };
+
+                if let Some((reason, stderr)) = crash_report {
+                    if stderr.is_empty() {
+                        error!("{}", reason);
+                    } else {
+                        error!("{} | stderr: {}", reason, stderr);
+                    }
+                    watchdog_ctx
+                        .cleanup_tunnel_resources(false, ConnectionStatus::Error)
+                        .await;
+                    break;
+                }
+            }
+        });
+
         Ok((core, sidecar_opt))
     }
 
-    async fn do_disconnect(&self) {
-        info!("BusterVPNService disconnecting active session...");
-        let _ = self.kill_switch.disable();
+    async fn cleanup_tunnel_resources(&self, disable_kill_switch: bool, target_status: ConnectionStatus) {
+        if disable_kill_switch {
+            let _ = self.kill_switch.disable();
+        } else {
+            let ks_active = self.state.lock().await.kill_switch_enabled;
+            if ks_active {
+                warn!("Crash watchdog cleanup preserving active Kill Switch firewall rules to prevent traffic leak");
+            }
+        }
 
         remove_virtual_tun_routes();
 
@@ -410,11 +473,13 @@ impl ServiceContext {
         if let Some(mut core) = st.core_process.take() {
             let _ = core.terminate();
         }
-        st.status = ConnectionStatus::Disconnected;
+        st.status = target_status;
         st.active_profile = None;
         st.connected_at = None;
         st.tun_enabled = false;
-        st.kill_switch_enabled = false;
+        if disable_kill_switch {
+            st.kill_switch_enabled = false;
+        }
         drop(st);
 
         let runtime_wintun = self.program_data_dir.join("runtime").join("wintun.dll");
@@ -422,6 +487,12 @@ impl ServiceContext {
 
         flush_dns_cache();
         self.session_journal.clear();
+    }
+
+    async fn do_disconnect(&self) {
+        info!("BusterVPNService disconnecting active session...");
+        self.cleanup_tunnel_resources(true, ConnectionStatus::Disconnected)
+            .await;
         info!("BusterVPNService disconnect teardown complete");
     }
 

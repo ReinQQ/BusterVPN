@@ -81,6 +81,9 @@ pub fn resolve_server_ipv4(server_host: &str) -> Result<Vec<String>, WindowsErro
         return Ok(vec![ip.to_string()]);
     }
 
+    // Flush DNS cache immediately before resolving so stale entries are never pinned into /32 bypass routes.
+    flush_dns_cache();
+
     // Try resolving host:443 to get socket addresses
     let socket_str = format!("{}:443", host);
     if let Ok(addrs) = socket_str.to_socket_addrs() {

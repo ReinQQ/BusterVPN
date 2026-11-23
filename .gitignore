@@ -22,3 +22,6 @@ crates/buster-app/cores/*.srs
 Thumbs.db
 .vscode/
 .idea/
+
+# Graphify knowledge graph
+graphify-out/

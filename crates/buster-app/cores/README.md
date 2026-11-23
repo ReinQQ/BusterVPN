@@ -1,6 +1,6 @@
 # Core Engine Binaries and Routing Databases
 
-BusterVPN v1.5.1 acts as an orchestrator and process supervisor for the **sing-box** core, utilizing **Wintun** on Windows and native kernel `/dev/net/tun` on Linux.
+BusterVPN v1.5.2 acts as an orchestrator and process supervisor for the **sing-box** core, utilizing **Wintun** on Windows and native kernel `/dev/net/tun` on Linux.
 
 ## Required Assets
 

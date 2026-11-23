@@ -5,6 +5,15 @@ use anyhow::{bail, Context, Result};
 
 /// Resolves a server hostname or IP string to one or more IPv4 address strings.
 pub fn resolve_server_ipv4(server_host: &str) -> Result<Vec<String>> {
+    if server_host.parse::<std::net::Ipv4Addr>().is_ok() {
+        return Ok(vec![server_host.to_string()]);
+    }
+
+    #[cfg(target_os = "windows")]
+    buster_windows::flush_dns_cache();
+    #[cfg(target_os = "linux")]
+    crate::platform::flush_dns_cache();
+
     let addrs: Vec<String> = format!("{}:0", server_host)
         .to_socket_addrs()
         .with_context(|| format!("Failed to resolve server hostname '{}'", server_host))?

@@ -20,15 +20,6 @@ impl BackendKind {
     }
 }
 
-/// Selected engine architecture mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum EngineMode {
-    #[default]
-    SingBox,
-    Classic,
-}
-
 /// How BusterVPN exposes the tunnel to Windows applications.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +80,7 @@ pub enum ConnectionStatus {
     Connected,
     Disconnecting,
     Faulted,
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

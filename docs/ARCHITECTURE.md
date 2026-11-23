@@ -1,12 +1,12 @@
 # BusterVPN Architecture Specification
 
-This document defines the architectural contract, subsystem boundaries, IPC communication protocols, process supervision model, and network recovery mechanisms of **BusterVPN v1.5.1**.
+This document defines the architectural contract, subsystem boundaries, IPC communication protocols, process supervision model, and network recovery mechanisms of **BusterVPN v1.5.2**.
 
 ---
 
 ## 1. System Design Principles
 
-BusterVPN functions as a privileged networking engine and process supervisor for modern proxy protocols. The v1.5.1 architecture adheres to five core engineering principles:
+BusterVPN functions as a privileged networking engine and process supervisor for modern proxy protocols. The v1.5.2 architecture adheres to five core engineering principles:
 
 1. **Privilege Separation & Out-of-the-Box Elevation**: While a background Windows Service (`BusterVPNService`) is available for headless and boot-time operations, `buster-app.exe` specifies `requireAdministrator` in its application manifest, ensuring that TUN adapter management and Windows Filtering Platform rules operate immediately out-of-the-box without requiring service pre-installation.
 2. **Deterministic Process Containment**: Network core processes must never survive abnormal termination of the host process or a system crash. Process isolation is enforced via Win32 **Job Objects** configured with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
@@ -99,9 +99,9 @@ D:(A;;GRGW;;;WD)(A;;GRGW;;;IU)(A;;GRGW;;;AU)
 - This architecture enables `busterctl.exe` and external tools to interact with the service over Named Pipe IPC, while `buster-app.exe` launches with `requireAdministrator` to ensure direct TUN/Kill Switch fallback capabilities when running standalone.
 
 ### 3.2 IPC Wire Protocol
-Communication utilizes length-prefixed JSON frames over the named pipe:
-- **Header**: 4-byte unsigned 32-bit integer (little-endian) representing the payload length in bytes.
-- **Payload**: UTF-8 encoded JSON string matching `IpcRequest` and `IpcResponse` schemas.
+Communication utilizes newline-delimited JSON (`\n`) messages over the named pipe `\\.\pipe\BusterVPNService`:
+- **Framing**: Each request and response is a single UTF-8 encoded JSON object serialized on one line and terminated with a newline byte (`\n`, `0x0A`), read line-by-line with `BufReader::read_line`.
+- **Payload**: JSON object matching the `IpcRequest` (`{ id, method, params }`) and `IpcResponse` (`{ id, result, error }`) schemas.
 
 #### Supported IPC Commands:
 - `Ping`: Connection health check; returns current service version and process ID.
@@ -117,7 +117,7 @@ Communication utilizes length-prefixed JSON frames over the named pipe:
 
 ## 4. Hybrid Network Engine Architecture
 
-BusterVPN v1.5.1 employs an optimized hybrid architecture that pairs `sing-box.exe` with an on-demand `xray.exe` sidecar:
+BusterVPN v1.5.2 employs an optimized hybrid architecture that pairs `sing-box.exe` with an on-demand `xray.exe` sidecar:
 
 ### 4.1 Primary Unified Engine (`sing-box.exe` v1.14+)
 `sing-box.exe` is the exclusive primary network engine responsible for system-level routing:

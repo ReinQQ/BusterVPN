@@ -153,7 +153,7 @@
       if (res.hasClientUpdate) {
         toast.info(t('settings.client_new_version', { version: res.clientVersion }), 'Update');
       } else {
-        toast.success(`v${updateStore.clientUpdate?.current_version || '1.5.1'}`, 'Up to date');
+        toast.success(`v${updateStore.clientUpdate?.current_version || '1.5.2'}`, 'Up to date');
       }
     } catch (e) {
       toast.error(`${e?.message || e}`, 'Update Check');
@@ -555,7 +555,7 @@
       <div>
         <div class="text-xs font-medium text-white flex items-center gap-2">
           <span class="font-unbounded font-semibold">{t('settings.client_info')}</span>
-          <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30">v1.5.1-release</span>
+          <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30">v1.5.2-release</span>
         </div>
         <div class="text-[11px] text-white/40 mt-0.5">Rust 1.85 • Tauri v2 • Svelte 5 • WinAPI Native Engine</div>
       </div>

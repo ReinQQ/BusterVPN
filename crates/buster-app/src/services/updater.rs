@@ -10,7 +10,7 @@ use tracing::info;
 
 pub const PRIMARY_MANIFEST_URL: &str = "https://vpn.buster.gripe/updates/manifest.json";
 pub const FALLBACK_MANIFEST_URL: &str = "https://buster.gripe/updates/manifest.json";
-pub const CURRENT_VERSION: &str = "1.5.1";
+pub const CURRENT_VERSION: &str = "1.5.2";
 
 #[cfg(target_os = "windows")]
 pub const CORE_COMPONENTS: &[&str] = &[
@@ -92,7 +92,7 @@ impl UpdaterService {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(6))
-            .user_agent("BusterVPN-Updater/1.5.1")
+            .user_agent("BusterVPN-Updater/1.5.2")
             .build()
             .unwrap_or_default();
 
@@ -125,7 +125,7 @@ impl UpdaterService {
         Ok(format!("{:x}", hash))
     }
 
-    /// Verifies the presence and hashes of all 5 core components (xray.exe, hysteria.exe, wintun.dll, geoip.dat, geosite.dat).
+    /// Verifies the presence and hashes of all 5 active core components (sing-box.exe, xray.exe, wintun.dll, geosite-ru.srs, geoip-ru.srs).
     pub async fn check_cores(
         &self,
         cores_dir: &Path,
@@ -149,7 +149,7 @@ impl UpdaterService {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
-                        if name == "sing-box" {
+                        if name == "sing-box" || name == "xray" {
                             if let Ok(meta) = std::fs::metadata(r_path) {
                                 let mut perms = meta.permissions();
                                 perms.set_mode(0o755);
@@ -300,7 +300,7 @@ impl UpdaterService {
                                     #[cfg(unix)]
                                     {
                                         use std::os::unix::fs::PermissionsExt;
-                                        if name == "sing-box" {
+                                        if name == "sing-box" || name == "xray" {
                                             if let Ok(meta) = std::fs::metadata(&dest_cores) {
                                                 let mut perms = meta.permissions();
                                                 perms.set_mode(0o755);
@@ -401,8 +401,6 @@ impl UpdaterService {
 
         // Purge obsolete legacy core files from installation and runtime directories
         let legacy_files = [
-            "xray.exe",
-            "xray",
             "hysteria.exe",
             "hysteria",
             "geoip.dat",
@@ -584,7 +582,7 @@ impl UpdaterService {
                 sleep 2\n\
                 kill -9 {pid} 2>/dev/null || true\n\
                 cp -rf \"{staging}/.\" \"{target}/\"\n\
-                rm -f \"{target}/cores/xray\" \"{target}/cores/hysteria\" \"{target}/cores/geoip.dat\" \"{target}/cores/geosite.dat\"\n\
+                rm -f \"{target}/cores/hysteria\" \"{target}/cores/geoip.dat\" \"{target}/cores/geosite.dat\"\n\
                 chmod +x \"{exe}\"\n\
                 nohup \"{exe}\" >/dev/null 2>&1 &\n\
                 rm -rf \"{staging}\"\n\
@@ -678,8 +676,8 @@ mod tests {
 
     #[test]
     fn test_current_version() {
-        assert_eq!(CURRENT_VERSION, "1.5.1");
-        assert_eq!(parse_version_tuple(CURRENT_VERSION), Some((1, 5, 1)));
+        assert_eq!(CURRENT_VERSION, "1.5.2");
+        assert_eq!(parse_version_tuple(CURRENT_VERSION), Some((1, 5, 2)));
     }
 
     #[test]
