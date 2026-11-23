@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tracing::info;
+use tracing::{info, warn};
 
 pub const PRIMARY_MANIFEST_URL: &str = "https://vpn.buster.gripe/updates/manifest.json";
 pub const FALLBACK_MANIFEST_URL: &str = "https://buster.gripe/updates/manifest.json";
@@ -80,6 +80,7 @@ pub struct ClientUpdateStatus {
 
 pub struct UpdaterService {
     client: reqwest::Client,
+    direct_client: reqwest::Client,
 }
 
 impl Default for UpdaterService {
@@ -89,29 +90,133 @@ impl Default for UpdaterService {
 }
 
 impl UpdaterService {
-    pub fn new() -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(6))
-            .user_agent("BusterVPN-Updater/1.5.2")
-            .build()
-            .unwrap_or_default();
+    fn build_http_client(no_proxy: bool) -> reqwest::Client {
+        let mut builder = reqwest::Client::builder()
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(Duration::from_secs(30))
+            .user_agent("BusterVPN-Updater/1.5.2");
 
-        Self { client }
+        if no_proxy {
+            builder = builder.no_proxy();
+        }
+
+        builder.build().unwrap_or_default()
+    }
+
+    pub fn new() -> Self {
+        Self {
+            client: Self::build_http_client(false),
+            direct_client: Self::build_http_client(true),
+        }
     }
 
     /// Fetches the manifest from primary URL with fallback to secondary.
     pub async fn fetch_manifest(&self) -> Result<UpdateManifest> {
         let urls = [PRIMARY_MANIFEST_URL, FALLBACK_MANIFEST_URL];
+        let mut last_err = String::new();
+
         for url in urls {
-            if let Ok(resp) = self.client.get(url).send().await {
-                if resp.status().is_success() {
-                    if let Ok(manifest) = resp.json::<UpdateManifest>().await {
-                        return Ok(manifest);
+            for (use_direct, http) in [(false, &self.client), (true, &self.direct_client)] {
+                let res = http
+                    .get(url)
+                    .timeout(Duration::from_secs(10))
+                    .send()
+                    .await;
+                match res {
+                    Ok(resp) => {
+                        let status = resp.status();
+                        if !status.is_success() {
+                            last_err = format!("{} returned HTTP {}", url, status);
+                            warn!("Manifest fetch failed (direct={}): {}", use_direct, last_err);
+                            continue;
+                        }
+                        match resp.json::<UpdateManifest>().await {
+                            Ok(manifest) => return Ok(manifest),
+                            Err(e) => {
+                                last_err = format!("Failed to decode manifest JSON from {}: {}", url, e);
+                                warn!("Manifest decode failed (direct={}): {}", use_direct, last_err);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        last_err = format!("Request to {} failed: {}", url, e);
                     }
                 }
             }
         }
-        bail!("Failed to fetch update manifest from both primary and fallback URLs")
+        bail!(
+            "Failed to fetch update manifest from both primary and fallback URLs: {}",
+            last_err
+        )
+    }
+
+    /// Downloads binary bytes across candidate URLs with a 3-attempt retry loop (500ms backoff)
+    /// and a `.no_proxy()` direct client fallback on transient network or proxy errors.
+    async fn download_bytes_with_retry(&self, urls: &[String], label: &str) -> Result<Vec<u8>> {
+        const MAX_ATTEMPTS: usize = 3;
+        let mut last_err = String::new();
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            for url in urls {
+                for (use_direct, http) in [(false, &self.client), (true, &self.direct_client)] {
+                    match http.get(url).send().await {
+                        Ok(resp) => {
+                            let status = resp.status();
+                            if !status.is_success() {
+                                last_err = format!("{} returned HTTP {}", url, status);
+                                warn!(
+                                    "Download attempt {}/{} for {} (direct={}) got non-success status: {}",
+                                    attempt, MAX_ATTEMPTS, label, use_direct, last_err
+                                );
+                                continue;
+                            }
+
+                            match resp.bytes().await {
+                                Ok(bytes) => return Ok(bytes.to_vec()),
+                                Err(e) => {
+                                    last_err = format!("Error reading response body from {}: {}", url, e);
+                                    warn!(
+                                        "Download attempt {}/{} for {} (direct={}) failed: {}",
+                                        attempt, MAX_ATTEMPTS, label, use_direct, last_err
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            last_err = format!("Request to {} failed: {}", url, e);
+                            warn!(
+                                "Download attempt {}/{} for {} (direct={}) failed: {}",
+                                attempt, MAX_ATTEMPTS, label, use_direct, last_err
+                            );
+                        }
+                    }
+                }
+            }
+
+            if attempt < MAX_ATTEMPTS {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
+
+        bail!(
+            "Failed to download {} after {} attempts: {}",
+            label,
+            MAX_ATTEMPTS,
+            last_err
+        )
+    }
+
+    /// Downloads a single core component from primary or fallback mirror with retries.
+    async fn download_core_component(&self, name: &str, target_url: &str) -> Result<Vec<u8>> {
+        let urls = vec![
+            target_url.to_string(),
+            target_url.replace("https://vpn.buster.gripe/", "https://buster.gripe/"),
+        ];
+        self.download_bytes_with_retry(&urls, &format!("core component '{}'", name))
+            .await
     }
 
     /// Computes the lowercase hex SHA-256 hash of a file.
@@ -326,25 +431,7 @@ impl UpdaterService {
             if !valid_locally {
                 info!("Downloading core component '{}' from {}", name, target_url);
 
-                let urls = [
-                    target_url.clone(),
-                    target_url.replace("https://vpn.buster.gripe/", "https://buster.gripe/"),
-                ];
-
-                let mut downloaded_bytes = None;
-                for u in &urls {
-                    if let Ok(resp) = self.client.get(u).send().await {
-                        if resp.status().is_success() {
-                            if let Ok(b) = resp.bytes().await {
-                                downloaded_bytes = Some(b);
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                let bytes = downloaded_bytes
-                    .ok_or_else(|| anyhow::anyhow!("Failed to download component '{}' from all candidate URLs", name))?;
+                let bytes = self.download_core_component(name, &target_url).await?;
 
                 if let Some(ref exp) = expected_hash {
                     let mut hasher = Sha256::new();
@@ -379,7 +466,7 @@ impl UpdaterService {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    if name == "sing-box" {
+                    if name == "sing-box" || name == "xray" {
                         if let Ok(meta) = std::fs::metadata(&dest_cores) {
                             let mut perms = meta.permissions();
                             perms.set_mode(0o755);
@@ -469,6 +556,11 @@ impl UpdaterService {
             .sha256
             .context("No sha256 specified in manifest for update")?;
 
+        self.download_and_install_update(&download_url, &expected_sha256)
+            .await
+    }
+
+    async fn download_and_install_update(&self, download_url: &str, expected_sha256: &str) -> Result<()> {
         let temp_dir = std::env::temp_dir().join("BusterVPN_Update");
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir)?;
@@ -478,17 +570,21 @@ impl UpdaterService {
         std::fs::create_dir_all(&staging_dir)?;
 
         info!("Downloading client update from {}", download_url);
-        let resp = self.client.get(&download_url).send().await?;
-        if !resp.status().is_success() {
-            bail!("Failed to download update: HTTP {}", resp.status());
+        let fallback_url = download_url.replace("https://vpn.buster.gripe/", "https://buster.gripe/");
+        let mut urls = vec![download_url.to_string()];
+        if fallback_url != download_url {
+            urls.push(fallback_url);
         }
 
-        let bytes = resp.bytes().await?;
+        let bytes = self
+            .download_bytes_with_retry(&urls, "client update package")
+            .await?;
+
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
         let downloaded_hash = format!("{:x}", hasher.finalize());
 
-        if !downloaded_hash.eq_ignore_ascii_case(&expected_sha256) {
+        if !downloaded_hash.eq_ignore_ascii_case(expected_sha256) {
             bail!(
                 "SHA-256 mismatch for update ZIP: expected {}, got {}",
                 expected_sha256,
@@ -684,5 +780,71 @@ mod tests {
     fn test_manifest_endpoints() {
         assert_eq!(PRIMARY_MANIFEST_URL, "https://vpn.buster.gripe/updates/manifest.json");
         assert_eq!(FALLBACK_MANIFEST_URL, "https://buster.gripe/updates/manifest.json");
+    }
+
+    #[tokio::test]
+    async fn test_download_bytes_with_retry_recovers_and_reports_http_status() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock server");
+        let addr = listener.local_addr().expect("local addr");
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_srv = counter.clone();
+
+        // First 4 requests (attempts 1 & 2 across client + direct_client) return 502; 5th returns 200 OK
+        let server_task = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { break };
+                let idx = counter_srv.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = socket.read(&mut buf).await;
+                    let resp = if idx < 4 {
+                        b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
+                    } else {
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nPAYLOAD".to_vec()
+                    };
+                    let _ = socket.write_all(&resp).await;
+                });
+            }
+        });
+
+        let svc = UpdaterService::new();
+        let url = format!("http://{}/test.bin", addr);
+        let bytes = svc
+            .download_bytes_with_retry(&[url.clone()], "test binary")
+            .await
+            .expect("should succeed on 3rd attempt");
+        assert_eq!(bytes, b"PAYLOAD");
+        assert_eq!(counter.load(Ordering::SeqCst), 5);
+
+        // Now verify persistent 404 returns a clear HTTP status error
+        let listener_err = TcpListener::bind("127.0.0.1:0").await.expect("bind 404 server");
+        let addr_err = listener_err.local_addr().expect("404 addr");
+        let err_server = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener_err.accept().await else { break };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = socket.read(&mut buf).await;
+                    let _ = socket
+                        .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .await;
+                });
+            }
+        });
+
+        let url_404 = format!("http://{}/missing.bin", addr_err);
+        let err = svc
+            .download_bytes_with_retry(&[url_404], "missing binary")
+            .await
+            .expect_err("404 must fail after retries");
+        assert!(err.to_string().contains("404"), "Unexpected error: {}", err);
+
+        server_task.abort();
+        err_server.abort();
     }
 }
