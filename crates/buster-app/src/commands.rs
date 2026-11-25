@@ -1,7 +1,6 @@
 //! Tauri IPC command handlers and AppState for frontend UI interaction.
 
 use std::collections::HashMap;
-#[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,10 +8,7 @@ use std::time::Duration;
 use uuid::Uuid;
 use buster_core::models::{ConnectionStatus, ServerProfile};
 use buster_core::parsing::parse_share_link;
-#[cfg(target_os = "windows")]
 use buster_windows::LogLine;
-#[cfg(not(target_os = "windows"))]
-use crate::platform::LogLine;
 
 use crate::models::{AppSettings, SubscriptionRecord};
 use crate::services::{
@@ -263,13 +259,13 @@ pub async fn update_subscription(
 ) -> Result<SubscriptionRecord, String> {
     let mut records = state.subscription_store.load().await.map_err(|e| e.to_string())?;
 
-    let target_idx = if let Some(ref u) = url.as_deref().filter(|s| !s.trim().is_empty()) {
-        records.iter().position(|r| r.url == *u)
-    } else if let Some(ref id_str) = sub_id.or(subId).as_deref().filter(|s| !s.trim().is_empty()) {
+    let target_idx = if let Some(u) = url.as_deref().filter(|s| !s.trim().is_empty()) {
+        records.iter().position(|r| r.url == u)
+    } else if let Some(id_str) = sub_id.or(subId).as_deref().filter(|s| !s.trim().is_empty()) {
         if let Ok(id) = Uuid::parse_str(id_str) {
             records.iter().position(|r| r.id == id)
         } else {
-            records.iter().position(|r| r.url == *id_str)
+            records.iter().position(|r| r.url == id_str)
         }
     } else if !records.is_empty() {
         Some(0)
@@ -352,7 +348,7 @@ pub async fn delete_subscription(
 #[tauri::command]
 pub async fn get_settings(state: tauri::State<'_, AppState>) -> Result<AppSettings, String> {
     let mut settings = state.settings_store.load().await.map_err(|e| e.to_string())?;
-    if crate::platform::is_autostart_enabled() {
+    if buster_windows::autostart::is_autostart_enabled() {
         settings.start_with_windows = true;
     }
     Ok(settings)
@@ -360,7 +356,7 @@ pub async fn get_settings(state: tauri::State<'_, AppState>) -> Result<AppSettin
 
 #[tauri::command]
 pub async fn save_settings(state: tauri::State<'_, AppState>, settings: AppSettings) -> Result<(), String> {
-    if let Err(e) = crate::platform::configure_autostart(settings.start_with_windows) {
+    if let Err(e) = buster_windows::autostart::configure_autostart(settings.start_with_windows) {
         tracing::warn!("Failed to configure autostart: {}", e);
     }
     state.settings_store.save(&settings).await.map_err(|e| e.to_string())
@@ -451,10 +447,8 @@ pub async fn get_recent_logs(state: tauri::State<'_, AppState>) -> Result<Vec<Lo
 
 #[tauri::command]
 pub async fn pick_exe_file() -> Result<Option<String>, String> {
-    #[cfg(target_os = "windows")]
-    {
-        tokio::task::spawn_blocking(|| {
-            let ps_script = r#"
+    tokio::task::spawn_blocking(|| {
+        let ps_script = r#"
 Add-Type -AssemblyName System.Windows.Forms
 $dialog = New-Object System.Windows.Forms.OpenFileDialog
 $dialog.Filter = 'Executables (*.exe)|*.exe|All Files (*.*)|*.*'
@@ -463,56 +457,21 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
     [System.IO.Path]::GetFileName($dialog.FileName)
 }
 "#;
-            let output = std::process::Command::new("powershell.exe")
-                .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
-                .creation_flags(0x08000000) // CREATE_NO_WINDOW
-                .output()
-                .map_err(|e| format!("Failed to open file dialog: {}", e))?;
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", ps_script])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output()
+            .map_err(|e| format!("Failed to open file dialog: {}", e))?;
 
-            let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if result.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(result))
-            }
-        })
-        .await
-        .map_err(|e| e.to_string())?
-    }
-    #[cfg(target_os = "linux")]
-    {
-        tokio::task::spawn_blocking(|| {
-            if let Ok(output) = std::process::Command::new("zenity")
-                .args(["--file-selection", "--title=Select Application"])
-                .output()
-            {
-                if output.status.success() {
-                    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if let Some(file_name) = std::path::Path::new(&path_str).file_name() {
-                        return Ok(Some(file_name.to_string_lossy().to_string()));
-                    }
-                }
-            }
-            if let Ok(output) = std::process::Command::new("kdialog")
-                .args(["--getopenfilename", ".", "*|All Files"])
-                .output()
-            {
-                if output.status.success() {
-                    let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if let Some(file_name) = std::path::Path::new(&path_str).file_name() {
-                        return Ok(Some(file_name.to_string_lossy().to_string()));
-                    }
-                }
-            }
+        let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if result.is_empty() {
             Ok(None)
-        })
-        .await
-        .map_err(|e| e.to_string())?
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        Ok(None)
-    }
+        } else {
+            Ok(Some(result))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -619,103 +578,75 @@ pub async fn fetch_diagnostics(
 
 #[tauri::command]
 pub async fn get_service_status(_state: tauri::State<'_, AppState>) -> Result<ServiceUiStatus, String> {
-    #[cfg(target_os = "windows")]
-    {
-        use buster_windows::ipc::{BusterServiceClient, WindowsServiceManager, WindowsServiceState};
-        let scm_state = WindowsServiceManager::query_status();
-        let running = BusterServiceClient::is_service_available().await
-            || scm_state == WindowsServiceState::Running;
-        let installed = scm_state != WindowsServiceState::NotInstalled;
+    use buster_windows::ipc::{BusterServiceClient, WindowsServiceManager, WindowsServiceState};
+    let scm_state = WindowsServiceManager::query_status();
+    let running = BusterServiceClient::is_service_available().await
+        || scm_state == WindowsServiceState::Running;
+    let installed = scm_state != WindowsServiceState::NotInstalled;
 
-        let auto_connect = if running {
-            BusterServiceClient::get_service_config().await.map(|c| c.auto_connect_on_boot).unwrap_or(false)
-        } else {
-            false
-        };
+    let auto_connect = if running {
+        BusterServiceClient::get_service_config().await.map(|c| c.auto_connect_on_boot).unwrap_or(false)
+    } else {
+        false
+    };
 
-        let state_text = if running {
-            "Активна".to_string()
-        } else if installed {
-            "Остановлена".to_string()
-        } else {
-            "Не установлена".to_string()
-        };
+    let state_text = if running {
+        "Активна".to_string()
+    } else if installed {
+        "Остановлена".to_string()
+    } else {
+        "Не установлена".to_string()
+    };
 
-        Ok(ServiceUiStatus {
-            installed,
-            running,
-            state_text,
-            auto_connect,
-        })
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Ok(ServiceUiStatus {
-            installed: false,
-            running: false,
-            state_text: "Не поддерживается на Linux".to_string(),
-            auto_connect: false,
-        })
-    }
+    Ok(ServiceUiStatus {
+        installed,
+        running,
+        state_text,
+        auto_connect,
+    })
 }
 
 #[tauri::command]
 pub async fn manage_service(action: String) -> Result<String, String> {
-    #[cfg(target_os = "windows")]
-    {
-        use buster_windows::ipc::WindowsServiceManager;
-        match action.to_lowercase().as_str() {
-            "start" => {
-                WindowsServiceManager::start_service().map_err(|e| e.to_string())?;
-                Ok("Служба запущена".to_string())
-            }
-            "stop" => {
-                WindowsServiceManager::stop_service().map_err(|e| e.to_string())?;
-                Ok("Служба остановлена".to_string())
-            }
-            "install" => {
-                let cur_exe = std::env::current_exe().map_err(|e| e.to_string())?;
-                let dir = cur_exe.parent().ok_or("No parent dir")?;
-                let service_exe = dir.join("buster-service.exe");
-                let target = if service_exe.is_file() {
-                    service_exe
-                } else {
-                    std::path::PathBuf::from(r"C:\Program Files\BusterVPN\buster-service.exe")
-                };
-                if !target.is_file() {
-                    return Err("Файл buster-service.exe не найден. Соберите buster-service или переустановите приложение".to_string());
-                }
-                WindowsServiceManager::install_service(&target).map_err(|e| e.to_string())?;
-                let _ = WindowsServiceManager::start_service();
-                Ok("Служба установлена и запущена".to_string())
-            }
-            "uninstall" => {
-                WindowsServiceManager::uninstall_service().map_err(|e| e.to_string())?;
-                Ok("Служба удалена".to_string())
-            }
-            other => Err(format!("Неизвестное действие: {}", other)),
+    use buster_windows::ipc::WindowsServiceManager;
+    match action.to_lowercase().as_str() {
+        "start" => {
+            WindowsServiceManager::start_service().map_err(|e| e.to_string())?;
+            Ok("Служба запущена".to_string())
         }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = action;
-        Err("Фоновая служба доступна только на Windows".to_string())
+        "stop" => {
+            WindowsServiceManager::stop_service().map_err(|e| e.to_string())?;
+            Ok("Служба остановлена".to_string())
+        }
+        "install" => {
+            let cur_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+            let dir = cur_exe.parent().ok_or("No parent dir")?;
+            let service_exe = dir.join("buster-service.exe");
+            let target = if service_exe.is_file() {
+                service_exe
+            } else {
+                std::path::PathBuf::from(r"C:\Program Files\BusterVPN\buster-service.exe")
+            };
+            if !target.is_file() {
+                return Err("Файл buster-service.exe не найден. Соберите buster-service или переустановите приложение".to_string());
+            }
+            WindowsServiceManager::install_service(&target).map_err(|e| e.to_string())?;
+            let _ = WindowsServiceManager::start_service();
+            Ok("Служба установлена и запущена".to_string())
+        }
+        "uninstall" => {
+            WindowsServiceManager::uninstall_service().map_err(|e| e.to_string())?;
+            Ok("Служба удалена".to_string())
+        }
+        other => Err(format!("Неизвестное действие: {}", other)),
     }
 }
 
 #[tauri::command]
 pub async fn set_service_auto_connect(enabled: bool) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        use buster_windows::ipc::BusterServiceClient;
-        if BusterServiceClient::is_service_available().await {
-            BusterServiceClient::set_auto_connect(enabled).await.map_err(|e| e.to_string())?;
-        }
-        Ok(())
+    use buster_windows::ipc::BusterServiceClient;
+    if BusterServiceClient::is_service_available().await {
+        BusterServiceClient::set_auto_connect(enabled).await.map_err(|e| e.to_string())?;
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = enabled;
-        Ok(())
-    }
+    Ok(())
 }

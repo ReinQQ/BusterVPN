@@ -2,10 +2,10 @@
 //!
 //! Manages:
 //! - Connection state transitions (Disconnected -> Connecting -> Connected -> Disconnecting)
-//! - Process isolation & crash management (Win32 Job Object on Windows, Process groups + PR_SET_PDEATHSIG on Linux)
+//! - Process isolation & crash management (Win32 Job Object)
 //! - Physical gateway discovery & host bypass route pinning
 //! - Windows Firewall Kill Switch activation/rollback
-//! - System proxy switcher (WinINET registry on Windows, GNOME/KDE on Linux)
+//! - System proxy switcher (WinINET registry)
 //! - Real-time stdout/stderr log capturing
 //! - Crash journal recording & startup recovery
 
@@ -24,7 +24,6 @@ use buster_core::parsing::parse_share_link;
 use crate::models::AppSettings;
 use crate::services::UpdaterService;
 
-#[cfg(target_os = "windows")]
 use buster_windows::{
     add_server_bypass_route, allocate_proxy_pair, apply_dns_servers, find_physical_gateway,
     is_elevated, proxy::SystemProxySettings, remove_server_bypass_route, resolve_server_ipv4,
@@ -32,14 +31,6 @@ use buster_windows::{
     LogLevel, LogLine, LogStream, NetworkMonitor, SafeJobObject, SessionJournal,
     SystemProxyManager, TunBypassRoute,
     ipc::{BusterServiceClient, ConnectTunnelParams},
-};
-
-#[cfg(not(target_os = "windows"))]
-use crate::platform::{
-    add_server_bypass_route, allocate_proxy_pair, apply_dns_servers, find_physical_gateway,
-    is_elevated, is_pid_running, remove_server_bypass_route, resolve_server_ipv4,
-    CoreProcessManager, FirewallKillSwitch, LogLine, NetworkMonitor, SafeJobObject,
-    SessionJournal, SystemProxyManager, SystemProxySettings, TunBypassRoute,
 };
 
 pub struct CoordinatorState {
@@ -97,44 +88,31 @@ impl SessionCoordinator {
 
     /// Recovers from abnormal shutdown on application startup.
     pub fn startup_recovery(&self) {
-        #[cfg(target_os = "windows")]
-        {
-            if let Err(e) = SessionJournal::recover_all_crash_state(&self.app_data_dir) {
-                tracing::warn!("Startup crash state recovery failed: {}", e);
-            }
-
-            // 1. Guaranteed Windows System Proxy disable & WinINet / WinHTTP reset
-            let proxy_journal = self.app_data_dir.join("proxy_journal.json");
-            let _ = buster_windows::disable_system_proxy(Some(&proxy_journal));
-
-            // 2. Remove any lingering virtual TUN routes (0.0.0.0/1, 128.0.0.0/1)
-            buster_windows::remove_virtual_tun_routes();
-
-            // 3. Dismantle any orphaned Wintun adapter
-            let runtime_wintun = self.app_data_dir.join("runtime").join("wintun.dll");
-            let cores_wintun = self.app_data_dir.join("cores").join("wintun.dll");
-            let wintun_path = if runtime_wintun.is_file() {
-                Some(runtime_wintun.as_path())
-            } else if cores_wintun.is_file() {
-                Some(cores_wintun.as_path())
-            } else {
-                None
-            };
-            let _ = buster_windows::dismantle_wintun_adapter(wintun_path);
-
-            // 4. Flush DNS cache
-            buster_windows::flush_dns_cache();
+        if let Err(e) = SessionJournal::recover_all_crash_state(&self.app_data_dir) {
+            tracing::warn!("Startup crash state recovery failed: {}", e);
         }
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            if let Err(e) = SessionJournal::recover_all_crash_state(&self.app_data_dir) {
-                tracing::warn!("Startup crash state recovery failed: {}", e);
-            }
-            let proxy_journal = self.app_data_dir.join("proxy_journal.json");
-            let _ = crate::platform::disable_system_proxy(Some(&proxy_journal));
-            crate::platform::flush_dns_cache();
-        }
+        // 1. Guaranteed Windows System Proxy disable & WinINet / WinHTTP reset
+        let proxy_journal = self.app_data_dir.join("proxy_journal.json");
+        let _ = buster_windows::disable_system_proxy(Some(&proxy_journal));
+
+        // 2. Remove any lingering virtual TUN routes (0.0.0.0/1, 128.0.0.0/1)
+        buster_windows::remove_virtual_tun_routes();
+
+        // 3. Dismantle any orphaned Wintun adapter
+        let runtime_wintun = self.app_data_dir.join("runtime").join("wintun.dll");
+        let cores_wintun = self.app_data_dir.join("cores").join("wintun.dll");
+        let wintun_path = if runtime_wintun.is_file() {
+            Some(runtime_wintun.as_path())
+        } else if cores_wintun.is_file() {
+            Some(cores_wintun.as_path())
+        } else {
+            None
+        };
+        let _ = buster_windows::dismantle_wintun_adapter(wintun_path);
+
+        // 4. Flush DNS cache
+        buster_windows::flush_dns_cache();
     }
 
     /// Prepares and synchronizes all core executables and routing database assets into runtime_dir.
@@ -143,77 +121,20 @@ impl SessionCoordinator {
         cores_dir: &Path,
         runtime_dir: &Path,
     ) -> Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            let extra_dirs = vec![
-                cores_dir.to_path_buf(),
-                self.app_data_dir.join("cores"),
-                PathBuf::from(r"C:\Program Files\BusterVPN\cores"),
-                PathBuf::from(r"C:\BUSTERVPN\antivpnv2\crates\buster-app\cores"),
-                PathBuf::from(r"C:\BUSTERVPN\cores"),
-                PathBuf::from(r"C:\BUSTERVPN"),
-            ];
-            sync_runtime_assets(runtime_dir, &extra_dirs)
-                .context("Failed to synchronize runtime assets")?;
-        }
+        let extra_dirs = vec![
+            cores_dir.to_path_buf(),
+            self.app_data_dir.join("cores"),
+            PathBuf::from(r"C:\Program Files\BusterVPN\cores"),
+            PathBuf::from(r"C:\BUSTERVPN\antivpnv2\crates\buster-app\cores"),
+            PathBuf::from(r"C:\BUSTERVPN\cores"),
+            PathBuf::from(r"C:\BUSTERVPN"),
+        ];
+        sync_runtime_assets(runtime_dir, &extra_dirs)
+            .context("Failed to synchronize runtime assets")?;
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            tokio::fs::create_dir_all(runtime_dir).await?;
-            let candidate_dirs = [
-                cores_dir.to_path_buf(),
-                self.app_data_dir.join("cores"),
-                PathBuf::from("/usr/lib/bustervpn/cores"),
-                PathBuf::from("/opt/bustervpn/cores"),
-            ];
-            let required_files = ["sing-box", "xray", "geosite-ru.srs", "geoip-ru.srs"];
-            for &file_name in &required_files {
-                let target = runtime_dir.join(file_name);
-                let target_len = target.metadata().map(|m| m.len()).unwrap_or(0);
-                for cand in &candidate_dirs {
-                    let src = cand.join(file_name);
-                    if src.is_file() {
-                        let src_len = src.metadata().map(|m| m.len()).unwrap_or(0);
-                        if target_len == 0 || target_len != src_len {
-                            if tokio::fs::copy(&src, &target).await.is_ok() {
-                                #[cfg(unix)]
-                                {
-                                    use std::os::unix::fs::PermissionsExt;
-                                    if file_name == "sing-box" || file_name == "xray" {
-                                        if let Ok(meta) = std::fs::metadata(&target) {
-                                            let mut perms = meta.permissions();
-                                            perms.set_mode(0o755);
-                                            let _ = std::fs::set_permissions(&target, perms);
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-            for legacy in &["hysteria", "geoip.dat", "geosite.dat", "hysteria_config.yaml"] {
-                let p = runtime_dir.join(legacy);
-                if p.exists() {
-                    let _ = tokio::fs::remove_file(p).await;
-                }
-            }
-        }
-
-        // Check if any critical engine component is still missing in runtime_dir
-        #[cfg(target_os = "windows")]
         let critical_missing = !runtime_dir.join("sing-box.exe").is_file()
             || !runtime_dir.join("xray.exe").is_file()
             || !runtime_dir.join("wintun.dll").is_file()
-            || !runtime_dir.join("geosite-ru.srs").is_file()
-            || !runtime_dir.join("geoip-ru.srs").is_file();
-
-        #[cfg(not(target_os = "windows"))]
-        let critical_missing = !runtime_dir.join("sing-box").is_file()
-            || !runtime_dir.join("xray").is_file()
             || !runtime_dir.join("geosite-ru.srs").is_file()
             || !runtime_dir.join("geoip-ru.srs").is_file();
 
@@ -228,80 +149,62 @@ impl SessionCoordinator {
 
     /// Ensures that the background Windows Service (BusterVPNService) is running.
     pub async fn ensure_service_running() -> Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            use buster_windows::ipc::{BusterServiceClient, WindowsServiceManager, WindowsServiceState};
+        use buster_windows::ipc::{BusterServiceClient, WindowsServiceManager, WindowsServiceState};
 
-            if BusterServiceClient::is_service_available().await {
-                return Ok(());
+        if BusterServiceClient::is_service_available().await {
+            return Ok(());
+        }
+
+        let scm_status = WindowsServiceManager::query_status();
+        match scm_status {
+            WindowsServiceState::Running => {
+                for _ in 0..15 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    if BusterServiceClient::is_service_available().await {
+                        return Ok(());
+                    }
+                }
             }
-
-            let scm_status = WindowsServiceManager::query_status();
-            match scm_status {
-                WindowsServiceState::Running => {
-                    for _ in 0..15 {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                        if BusterServiceClient::is_service_available().await {
-                            return Ok(());
-                        }
+            WindowsServiceState::Stopped
+            | WindowsServiceState::StartPending
+            | WindowsServiceState::StopPending
+            | WindowsServiceState::Other(_) => {
+                tracing::info!("BusterVPNService is stopped in SCM. Attempting to start...");
+                if WindowsServiceManager::start_service().is_err() {
+                    let _ = std::process::Command::new("sc.exe")
+                        .args(["start", "BusterVPNService"])
+                        .output();
+                }
+                for _ in 0..15 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    if BusterServiceClient::is_service_available().await {
+                        tracing::info!("BusterVPNService started successfully");
+                        return Ok(());
                     }
                 }
-                WindowsServiceState::Stopped
-                | WindowsServiceState::StartPending
-                | WindowsServiceState::StopPending
-                | WindowsServiceState::Other(_) => {
-                    tracing::info!("BusterVPNService is stopped in SCM. Attempting to start...");
-                    if WindowsServiceManager::start_service().is_err() {
-                        let _ = std::process::Command::new("sc.exe")
-                            .args(["start", "BusterVPNService"])
-                            .output();
-                    }
-                    for _ in 0..15 {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                        if BusterServiceClient::is_service_available().await {
-                            tracing::info!("BusterVPNService started successfully");
-                            return Ok(());
-                        }
-                    }
-                }
-                WindowsServiceState::NotInstalled => {
-                    tracing::info!("BusterVPNService is not installed in SCM. Attempting registration...");
-                    let cur_exe = std::env::current_exe().unwrap_or_default();
-                    let cur_dir = cur_exe.parent().unwrap_or_else(|| Path::new("."));
+            }
+            WindowsServiceState::NotInstalled => {
+                tracing::info!("BusterVPNService is not installed in SCM. Attempting registration...");
+                let cur_exe = std::env::current_exe().unwrap_or_default();
+                let cur_dir = cur_exe.parent().unwrap_or_else(|| Path::new("."));
 
-                    let service_candidates = [
-                        cur_dir.join("buster-service.exe"),
-                        PathBuf::from(r"C:\Program Files\BusterVPN\buster-service.exe"),
-                        PathBuf::from(r"C:\BUSTERVPN\antivpnv2\target\release\buster-service.exe"),
-                    ];
-                    let service_exe = service_candidates.into_iter().find(|p| p.is_file());
+                let service_candidates = [
+                    cur_dir.join("buster-service.exe"),
+                    PathBuf::from(r"C:\Program Files\BusterVPN\buster-service.exe"),
+                    PathBuf::from(r"C:\BUSTERVPN\antivpnv2\target\release\buster-service.exe"),
+                ];
+                let service_exe = service_candidates.into_iter().find(|p| p.is_file());
 
-                    let ctl_candidates = [
-                        cur_dir.join("busterctl.exe"),
-                        PathBuf::from(r"C:\Program Files\BusterVPN\busterctl.exe"),
-                        PathBuf::from(r"C:\BUSTERVPN\antivpnv2\target\release\busterctl.exe"),
-                    ];
-                    let ctl_exe = ctl_candidates.into_iter().find(|p| p.is_file());
+                let ctl_candidates = [
+                    cur_dir.join("busterctl.exe"),
+                    PathBuf::from(r"C:\Program Files\BusterVPN\busterctl.exe"),
+                    PathBuf::from(r"C:\BUSTERVPN\antivpnv2\target\release\busterctl.exe"),
+                ];
+                let ctl_exe = ctl_candidates.into_iter().find(|p| p.is_file());
 
-                    if let Some(ref svc) = service_exe {
-                        if WindowsServiceManager::install_service(svc).is_ok() {
-                            let _ = WindowsServiceManager::start_service();
-                        } else if let Some(ref ctl) = ctl_exe {
-                            let _ = std::process::Command::new("powershell.exe")
-                                .args([
-                                    "-NoProfile",
-                                    "-Command",
-                                    &format!("Start-Process -FilePath '{}' -ArgumentList 'service install' -Verb RunAs -Wait", ctl.display())
-                                ])
-                                .output();
-                            let _ = std::process::Command::new("powershell.exe")
-                                .args([
-                                    "-NoProfile",
-                                    "-Command",
-                                    &format!("Start-Process -FilePath '{}' -ArgumentList 'service start' -Verb RunAs -Wait", ctl.display())
-                                ])
-                                .output();
-                        }
+                if let Some(ref svc) = service_exe {
+                    if WindowsServiceManager::install_service(svc).is_ok() {
+                        let _ = WindowsServiceManager::start_service();
                     } else if let Some(ref ctl) = ctl_exe {
                         let _ = std::process::Command::new("powershell.exe")
                             .args([
@@ -318,41 +221,48 @@ impl SessionCoordinator {
                             ])
                             .output();
                     }
+                } else if let Some(ref ctl) = ctl_exe {
+                    let _ = std::process::Command::new("powershell.exe")
+                        .args([
+                            "-NoProfile",
+                            "-Command",
+                            &format!("Start-Process -FilePath '{}' -ArgumentList 'service install' -Verb RunAs -Wait", ctl.display())
+                        ])
+                        .output();
+                    let _ = std::process::Command::new("powershell.exe")
+                        .args([
+                            "-NoProfile",
+                            "-Command",
+                            &format!("Start-Process -FilePath '{}' -ArgumentList 'service start' -Verb RunAs -Wait", ctl.display())
+                        ])
+                        .output();
+                }
 
-                    for _ in 0..15 {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-                        if BusterServiceClient::is_service_available().await {
-                            tracing::info!("BusterVPNService installed and running");
-                            return Ok(());
-                        }
+                for _ in 0..15 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    if BusterServiceClient::is_service_available().await {
+                        tracing::info!("BusterVPNService installed and running");
+                        return Ok(());
                     }
                 }
             }
-
-            if BusterServiceClient::is_service_available().await {
-                Ok(())
-            } else {
-                tracing::warn!("Could not automatically start BusterVPNService Named Pipe server");
-                Ok(())
-            }
         }
 
-        #[cfg(not(target_os = "windows"))]
-        {
+        if BusterServiceClient::is_service_available().await {
+            Ok(())
+        } else {
+            tracing::warn!("Could not automatically start BusterVPNService Named Pipe server");
             Ok(())
         }
     }
 
     /// Gets the current connection status.
     pub async fn get_status(&self) -> ConnectionStatus {
-        #[cfg(target_os = "windows")]
-        {
-            if self.state.lock().await.using_service {
-                if let Ok(rep) = BusterServiceClient::get_status().await {
-                    let mut st = self.state.lock().await;
-                    st.status = rep.status;
-                    return rep.status;
-                }
+        if self.state.lock().await.using_service {
+            if let Ok(rep) = BusterServiceClient::get_status().await {
+                let mut st = self.state.lock().await;
+                st.status = rep.status;
+                return rep.status;
             }
         }
         self.state.lock().await.status
@@ -365,12 +275,9 @@ impl SessionCoordinator {
 
     /// Gets recent log entries.
     pub async fn get_logs(&self) -> Vec<LogLine> {
-        #[cfg(target_os = "windows")]
-        {
-            if self.state.lock().await.using_service {
-                if let Ok(logs) = BusterServiceClient::get_logs().await {
-                    return logs;
-                }
+        if self.state.lock().await.using_service {
+            if let Ok(logs) = BusterServiceClient::get_logs().await {
+                return logs;
             }
         }
         self.state.lock().await.recent_logs.clone()
@@ -397,13 +304,8 @@ impl SessionCoordinator {
         st.active_profile = Some(profile.clone());
         drop(st);
 
-        #[cfg(target_os = "windows")]
         let _ = Self::ensure_service_running().await;
-
-        #[cfg(target_os = "windows")]
         let service_available = BusterServiceClient::is_service_available().await;
-        #[cfg(not(target_os = "windows"))]
-        let service_available = false;
 
         let res = if service_available {
             self.connect_via_service(profile, settings, cores_dir).await
@@ -430,7 +332,6 @@ impl SessionCoordinator {
         Ok(())
     }
 
-    #[cfg(target_os = "windows")]
     async fn connect_via_service(
         &self,
         profile: &ServerProfile,
@@ -452,7 +353,7 @@ impl SessionCoordinator {
         let server_host = profile
             .host
             .as_deref()
-            .or_else(|| parsed_server.host.as_deref())
+            .or(parsed_server.host.as_deref())
             .unwrap_or("127.0.0.1");
 
         let server_ips = resolve_server_ipv4(server_host).unwrap_or_default();
@@ -463,7 +364,7 @@ impl SessionCoordinator {
         let is_vless = parsed_server
             .xray
             .as_ref()
-            .map_or(false, |x| x.protocol == XrayProtocol::Vless);
+            .is_some_and(|x| x.protocol == XrayProtocol::Vless);
 
         let mut sidecar_config: Option<String> = None;
         let mut sidecar_filename: Option<String> = None;
@@ -567,14 +468,9 @@ impl SessionCoordinator {
     ) -> Result<()> {
         let routing_mode = settings.effective_routing_mode();
 
-        // 1. Verify elevation if TUN mode is enabled
-        #[cfg(target_os = "windows")]
+        // 1. Verify elevation if TUN mode or Kill Switch is enabled
         if (routing_mode.has_tun() || settings.kill_switch) && !is_elevated() {
             bail!("Фоновая служба BusterVPNService не запущена. Для работы TUN и Kill Switch без прав администратора запустите службу BusterVPNService в Настройках или перезапустите приложение от имени администратора.");
-        }
-        #[cfg(not(target_os = "windows"))]
-        if routing_mode.has_tun() && !is_elevated() {
-            bail!("TUN mode requires administrative privileges or network capabilities (CAP_NET_ADMIN). Please run as root or grant capabilities: sudo setcap cap_net_admin,cap_net_bind_service=+ep /path/to/binary");
         }
 
         // 2. Parse raw share link to extract core protocol configuration
@@ -593,7 +489,7 @@ impl SessionCoordinator {
         let server_host = profile
             .host
             .as_deref()
-            .or_else(|| parsed_server.host.as_deref())
+            .or(parsed_server.host.as_deref())
             .unwrap_or("127.0.0.1");
 
         let server_ips = resolve_server_ipv4(server_host)
@@ -602,22 +498,13 @@ impl SessionCoordinator {
         // 5. Install TUN server bypass route if TUN is enabled
         let mut bypass_route = None;
         if routing_mode.has_tun() {
-            #[cfg(target_os = "windows")]
-            {
-                let gateway = find_physical_gateway()
-                    .context("Failed to discover physical default gateway for TUN bypass route")?;
+            let gateway = find_physical_gateway()
+                .context("Failed to discover physical default gateway for TUN bypass route")?;
 
-                let route = add_server_bypass_route(server_host, Some(&gateway))
-                    .context("Failed to install server bypass route")?;
+            let route = add_server_bypass_route(server_host, Some(&gateway))
+                .context("Failed to install server bypass route")?;
 
-                bypass_route = Some(route);
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let route = add_server_bypass_route(server_host, None)
-                    .context("Failed to install server bypass route")?;
-                bypass_route = Some(route);
-            }
+            bypass_route = Some(route);
         }
 
         // 6. Prepare runtime directory and synchronize engine assets
@@ -625,21 +512,17 @@ impl SessionCoordinator {
         self.prepare_runtime_assets(cores_dir, &runtime_dir).await?;
 
         // 6b. Ensure no stale orphaned adapter exists before spawning core
-        #[cfg(target_os = "windows")]
-        {
-            let runtime_wintun = runtime_dir.join("wintun.dll");
-            let _ = buster_windows::dismantle_wintun_adapter(Some(&runtime_wintun));
-        }
+        let runtime_wintun = runtime_dir.join("wintun.dll");
+        let _ = buster_windows::dismantle_wintun_adapter(Some(&runtime_wintun));
 
-        let singbox_name = if cfg!(target_os = "windows") { "sing-box.exe" } else { "sing-box" };
+        let singbox_name = "sing-box.exe";
 
         let is_vless = parsed_server
             .xray
             .as_ref()
-            .map_or(false, |x| x.protocol == XrayProtocol::Vless);
+            .is_some_and(|x| x.protocol == XrayProtocol::Vless);
 
-        let xray_name = if cfg!(target_os = "windows") { "xray.exe" } else { "xray" };
-        let xray_exe = runtime_dir.join(xray_name);
+        let xray_exe = runtime_dir.join("xray.exe");
 
         let mut sidecar_opt: Option<CoreProcessManager> = None;
         let job = Arc::new(SafeJobObject::new().context("Failed to create SafeJobObject")?);
@@ -701,7 +584,6 @@ impl SessionCoordinator {
                 }
             });
 
-            #[cfg(target_os = "windows")]
             wait_for_sidecar_ready(&mut sc, detour_port)
                 .await
                 .context("xray.exe sidecar failed readiness check")?;
@@ -738,17 +620,7 @@ impl SessionCoordinator {
             abs_config_str,
         ];
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = std::fs::metadata(&core_exe) {
-                let mut perms = meta.permissions();
-                perms.set_mode(0o755);
-                let _ = std::fs::set_permissions(&core_exe, perms);
-            }
-        }
-
-        // 7. Spawn core process bound to Win32 Job Object (Windows) or Process Group (Linux)
+        // 7. Spawn core process bound to Win32 Job Object
         let mut core = CoreProcessManager::spawn_core_with_workdir(&core_exe, args, job, cores_dir)
             .with_context(|| format!("Failed to spawn core process at {}", core_exe.display()))?;
 
@@ -775,7 +647,6 @@ impl SessionCoordinator {
         }
 
         // 11. If TUN is enabled, apply DNS with retry while Wintun interface initializes
-        #[cfg(target_os = "windows")]
         if routing_mode.has_tun() {
             let dns_list = settings.dns_profile.dns_servers();
             tokio::spawn(async move {
@@ -813,7 +684,6 @@ impl SessionCoordinator {
         });
 
         // 13. Crash Watchdog: monitors both sing-box.exe and xray.exe to prevent unencrypted leaks under active Kill Switch
-        #[cfg(target_os = "windows")]
         {
             let watchdog_state = self.state.clone();
             let watchdog_killswitch_active = settings.kill_switch;
@@ -928,37 +798,8 @@ impl SessionCoordinator {
                 }
             });
         }
-        #[cfg(not(target_os = "windows"))]
-        {
-            let watchdog_state = self.state.clone();
-            let watchdog_killswitch_active = settings.kill_switch;
-            let core_pid = pid;
-            tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-                    let mut st = watchdog_state.lock().await;
-                    if st.status != ConnectionStatus::Connected {
-                        break;
-                    }
-                    if !is_pid_running(core_pid) {
-                        tracing::error!(
-                            "Core process (PID {}) terminated unexpectedly while session is Connected!",
-                            core_pid
-                        );
-                        st.status = ConnectionStatus::Error;
-                        if watchdog_killswitch_active {
-                            tracing::warn!(
-                                "Fail-Closed Kill Switch is ACTIVE: preserving firewall block rules to prevent traffic leak!"
-                            );
-                        }
-                        break;
-                    }
-                }
-            });
-        }
 
         // 14. Network Monitor: auto-reconnect routes on network interface / physical gateway change
-        #[cfg(target_os = "windows")]
         {
             let coord_state = self.state.clone();
             let monitor = NetworkMonitor::start(move || {
@@ -1014,13 +855,10 @@ impl SessionCoordinator {
         drop(st);
 
         if was_using_service {
-            #[cfg(target_os = "windows")]
-            {
-                let proxy_journal = self.app_data_dir.join("proxy_journal.json");
-                let _ = buster_windows::disable_system_proxy(Some(&proxy_journal));
-                let _ = self.proxy_manager.disable();
-                let _ = BusterServiceClient::disconnect_tunnel().await;
-            }
+            let proxy_journal = self.app_data_dir.join("proxy_journal.json");
+            let _ = buster_windows::disable_system_proxy(Some(&proxy_journal));
+            let _ = self.proxy_manager.disable();
+            let _ = BusterServiceClient::disconnect_tunnel().await;
             let mut st = self.state.lock().await;
             st.status = ConnectionStatus::Disconnected;
             st.active_profile = None;
@@ -1052,15 +890,11 @@ impl SessionCoordinator {
 
         // 1. System Proxy reset (ProxyEnable = 0, clear ProxyServer, WinINet refresh & Kill Switch disable)
         let proxy_journal = self.app_data_dir.join("proxy_journal.json");
-        #[cfg(target_os = "windows")]
         let _ = buster_windows::disable_system_proxy(Some(&proxy_journal));
-        #[cfg(not(target_os = "windows"))]
-        let _ = crate::platform::disable_system_proxy(Some(&proxy_journal));
         let _ = self.proxy_manager.disable();
         let _ = self.kill_switch.disable();
 
         // 2. Virtual Routes removal (virtual TUN routes & server host bypass routes)
-        #[cfg(target_os = "windows")]
         buster_windows::remove_virtual_tun_routes();
 
         let mut st = self.state.lock().await;
@@ -1079,25 +913,19 @@ impl SessionCoordinator {
         drop(st);
 
         // 4. Wintun dismantle and release driver handles
-        #[cfg(target_os = "windows")]
-        {
-            let runtime_wintun = self.app_data_dir.join("runtime").join("wintun.dll");
-            let cores_wintun = self.app_data_dir.join("cores").join("wintun.dll");
-            let wintun_path = if runtime_wintun.is_file() {
-                Some(runtime_wintun.as_path())
-            } else if cores_wintun.is_file() {
-                Some(cores_wintun.as_path())
-            } else {
-                None
-            };
-            let _ = buster_windows::dismantle_wintun_adapter(wintun_path);
-        }
+        let runtime_wintun = self.app_data_dir.join("runtime").join("wintun.dll");
+        let cores_wintun = self.app_data_dir.join("cores").join("wintun.dll");
+        let wintun_path = if runtime_wintun.is_file() {
+            Some(runtime_wintun.as_path())
+        } else if cores_wintun.is_file() {
+            Some(cores_wintun.as_path())
+        } else {
+            None
+        };
+        let _ = buster_windows::dismantle_wintun_adapter(wintun_path);
 
         // 5. DNS cache flush
-        #[cfg(target_os = "windows")]
         buster_windows::flush_dns_cache();
-        #[cfg(not(target_os = "windows"))]
-        crate::platform::flush_dns_cache();
 
         // Clear crash journal
         self.session_journal.clear();

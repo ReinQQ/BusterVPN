@@ -10,21 +10,11 @@ use tracing::{info, warn};
 
 pub const PRIMARY_MANIFEST_URL: &str = "https://vpn.buster.gripe/updates/manifest.json";
 pub const FALLBACK_MANIFEST_URL: &str = "https://buster.gripe/updates/manifest.json";
-pub const CURRENT_VERSION: &str = "1.5.2";
+pub const CURRENT_VERSION: &str = "1.5.3";
 
-#[cfg(target_os = "windows")]
 pub const CORE_COMPONENTS: &[&str] = &[
     "sing-box.exe",
     "xray.exe",
-    "wintun.dll",
-    "geosite-ru.srs",
-    "geoip-ru.srs",
-];
-
-#[cfg(not(target_os = "windows"))]
-pub const CORE_COMPONENTS: &[&str] = &[
-    "sing-box",
-    "xray",
     "wintun.dll",
     "geosite-ru.srs",
     "geoip-ru.srs",
@@ -97,7 +87,7 @@ impl UpdaterService {
             .no_deflate()
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(30))
-            .user_agent("BusterVPN-Updater/1.5.2");
+            .user_agent("BusterVPN-Updater/1.5.3");
 
         if no_proxy {
             builder = builder.no_proxy();
@@ -251,17 +241,6 @@ impl UpdaterService {
                 } else if cores_path.is_file() {
                     // Sync from cores_dir to runtime_dir
                     let _ = std::fs::copy(&cores_path, r_path);
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        if name == "sing-box" || name == "xray" {
-                            if let Ok(meta) = std::fs::metadata(r_path) {
-                                let mut perms = meta.permissions();
-                                perms.set_mode(0o755);
-                                let _ = std::fs::set_permissions(r_path, perms);
-                            }
-                        }
-                    }
                     (r_path.clone(), true)
                 } else {
                     (r_path.clone(), false)
@@ -340,8 +319,6 @@ impl UpdaterService {
             PathBuf::from(r"C:\BUSTERVPN\antivpnv2\crates\buster-app\cores"),
             PathBuf::from(r"C:\BUSTERVPN\cores"),
             PathBuf::from(r"C:\BUSTERVPN"),
-            PathBuf::from("/usr/lib/bustervpn/cores"),
-            PathBuf::from("/opt/bustervpn/cores"),
         ];
 
         for &name in CORE_COMPONENTS {
@@ -402,24 +379,6 @@ impl UpdaterService {
                                     if let Some(ref r_path) = dest_runtime {
                                         let _ = std::fs::copy(&cand_file, r_path);
                                     }
-                                    #[cfg(unix)]
-                                    {
-                                        use std::os::unix::fs::PermissionsExt;
-                                        if name == "sing-box" || name == "xray" {
-                                            if let Ok(meta) = std::fs::metadata(&dest_cores) {
-                                                let mut perms = meta.permissions();
-                                                perms.set_mode(0o755);
-                                                let _ = std::fs::set_permissions(&dest_cores, perms);
-                                            }
-                                            if let Some(ref r_path) = dest_runtime {
-                                                if let Ok(meta) = std::fs::metadata(r_path) {
-                                                    let mut perms = meta.permissions();
-                                                    perms.set_mode(0o755);
-                                                    let _ = std::fs::set_permissions(r_path, perms);
-                                                }
-                                            }
-                                        }
-                                    }
                                     break;
                                 }
                             }
@@ -463,25 +422,6 @@ impl UpdaterService {
                     let _ = std::fs::rename(&temp_runtime, r_path);
                 }
 
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    if name == "sing-box" || name == "xray" {
-                        if let Ok(meta) = std::fs::metadata(&dest_cores) {
-                            let mut perms = meta.permissions();
-                            perms.set_mode(0o755);
-                            let _ = std::fs::set_permissions(&dest_cores, perms);
-                        }
-                        if let Some(ref r_path) = dest_runtime {
-                            if let Ok(meta) = std::fs::metadata(r_path) {
-                                let mut perms = meta.permissions();
-                                perms.set_mode(0o755);
-                                let _ = std::fs::set_permissions(r_path, perms);
-                            }
-                        }
-                    }
-                }
-
                 info!("Successfully verified and installed component: {}", name);
             }
         }
@@ -500,11 +440,8 @@ impl UpdaterService {
             if let Some(r_dir) = runtime_dir {
                 let _ = std::fs::remove_file(r_dir.join(legacy));
             }
-            #[cfg(target_os = "windows")]
-            {
-                let progdata = PathBuf::from(r"C:\ProgramData\BusterVPN\runtime").join(legacy);
-                let _ = std::fs::remove_file(progdata);
-            }
+            let progdata = PathBuf::from(r"C:\ProgramData\BusterVPN\runtime").join(legacy);
+            let _ = std::fs::remove_file(progdata);
         }
 
         Ok(self.check_cores(cores_dir, runtime_dir).await)
@@ -595,117 +532,64 @@ impl UpdaterService {
         std::fs::write(&zip_path, &bytes)?;
         info!("Update ZIP downloaded and verified ({})", downloaded_hash);
 
-        #[cfg(target_os = "windows")]
-        {
-            // Extract using tar.exe (available on Windows 10/11) or PowerShell
-            let tar_status = std::process::Command::new("tar.exe")
-                .args(["-xf", zip_path.to_str().unwrap(), "-C", staging_dir.to_str().unwrap()])
-                .status();
+        // Extract using tar.exe (available on Windows 10/11) or PowerShell
+        let tar_status = std::process::Command::new("tar.exe")
+            .args(["-xf", zip_path.to_str().unwrap(), "-C", staging_dir.to_str().unwrap()])
+            .status();
 
-            let extracted = match tar_status {
-                Ok(s) if s.success() => true,
-                _ => {
-                    let ps_cmd = format!(
-                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                        zip_path.display(),
-                        staging_dir.display()
-                    );
-                    let ps_status = std::process::Command::new("powershell.exe")
-                        .args(["-NoProfile", "-Command", &ps_cmd])
-                        .status();
-                    matches!(ps_status, Ok(s) if s.success())
-                }
-            };
-
-            if !extracted {
-                bail!("Failed to extract update package archive");
+        let extracted = match tar_status {
+            Ok(s) if s.success() => true,
+            _ => {
+                let ps_cmd = format!(
+                    "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                    zip_path.display(),
+                    staging_dir.display()
+                );
+                let ps_status = std::process::Command::new("powershell.exe")
+                    .args(["-NoProfile", "-Command", &ps_cmd])
+                    .status();
+                matches!(ps_status, Ok(s) if s.success())
             }
+        };
 
-            // Target application executable directory
-            let current_exe = std::env::current_exe()?;
-            let target_dir = current_exe
-                .parent()
-                .context("Cannot determine executable directory")?;
-            let current_pid = std::process::id();
-
-            // Generate update.bat
-            let bat_content = format!(
-                "@echo off\r\n\
-                timeout /t 2 /nobreak >nul\r\n\
-                taskkill /F /PID {pid} >nul 2>&1\r\n\
-                xcopy /y /e \"{staging}\\*\" \"{target}\\\" >nul\r\n\
-                del /f /q \"{target}\\cores\\hysteria.exe\" \"{target}\\cores\\geoip.dat\" \"{target}\\cores\\geosite.dat\" >nul 2>&1\r\n\
-                del /f /q \"%LOCALAPPDATA%\\BusterVPN\\runtime\\hysteria.exe\" \"%LOCALAPPDATA%\\BusterVPN\\runtime\\geoip.dat\" \"%LOCALAPPDATA%\\BusterVPN\\runtime\\geosite.dat\" \"%LOCALAPPDATA%\\BusterVPN\\runtime\\hysteria_config.yaml\" >nul 2>&1\r\n\
-                del /f /q \"%PROGRAMDATA%\\BusterVPN\\runtime\\hysteria.exe\" \"%PROGRAMDATA%\\BusterVPN\\runtime\\geoip.dat\" \"%PROGRAMDATA%\\BusterVPN\\runtime\\geosite.dat\" >nul 2>&1\r\n\
-                start \"\" \"{exe}\"\r\n\
-                rd /s /q \"{staging}\"\r\n\
-                del \"%~f0\"\r\n",
-                pid = current_pid,
-                staging = staging_dir.display(),
-                target = target_dir.display(),
-                exe = current_exe.display(),
-            );
-
-            let bat_path = temp_dir.join("update.bat");
-            std::fs::write(&bat_path, bat_content)?;
-
-            info!("Spawning update.bat script: {:?}", bat_path);
-            let _ = std::process::Command::new("cmd.exe")
-                .args(["/C", bat_path.to_str().unwrap()])
-                .spawn();
-
-            std::process::exit(0);
+        if !extracted {
+            bail!("Failed to extract update package archive");
         }
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            let tar_status = std::process::Command::new("tar")
-                .args(["-xf", zip_path.to_str().unwrap(), "-C", staging_dir.to_str().unwrap()])
-                .status();
+        // Target application executable directory
+        let current_exe = std::env::current_exe()?;
+        let target_dir = current_exe
+            .parent()
+            .context("Cannot determine executable directory")?;
+        let current_pid = std::process::id();
 
-            if !matches!(tar_status, Ok(s) if s.success()) {
-                bail!("Failed to extract update package archive");
-            }
+        // Generate update.bat
+        let bat_content = format!(
+            "@echo off\r\n\
+            timeout /t 2 /nobreak >nul\r\n\
+            taskkill /F /PID {pid} >nul 2>&1\r\n\
+            xcopy /y /e \"{staging}\\*\" \"{target}\\\" >nul\r\n\
+            del /f /q \"{target}\\cores\\hysteria.exe\" \"{target}\\cores\\geoip.dat\" \"{target}\\cores\\geosite.dat\" >nul 2>&1\r\n\
+            del /f /q \"%LOCALAPPDATA%\\BusterVPN\\runtime\\hysteria.exe\" \"%LOCALAPPDATA%\\BusterVPN\\runtime\\geoip.dat\" \"%LOCALAPPDATA%\\BusterVPN\\runtime\\geosite.dat\" \"%LOCALAPPDATA%\\BusterVPN\\runtime\\hysteria_config.yaml\" >nul 2>&1\r\n\
+            del /f /q \"%PROGRAMDATA%\\BusterVPN\\runtime\\hysteria.exe\" \"%PROGRAMDATA%\\BusterVPN\\runtime\\geoip.dat\" \"%PROGRAMDATA%\\BusterVPN\\runtime\\geosite.dat\" >nul 2>&1\r\n\
+            start \"\" \"{exe}\"\r\n\
+            rd /s /q \"{staging}\"\r\n\
+            del \"%~f0\"\r\n",
+            pid = current_pid,
+            staging = staging_dir.display(),
+            target = target_dir.display(),
+            exe = current_exe.display(),
+        );
 
-            let current_exe = std::env::current_exe()?;
-            let target_dir = current_exe
-                .parent()
-                .context("Cannot determine executable directory")?;
-            let current_pid = std::process::id();
+        let bat_path = temp_dir.join("update.bat");
+        std::fs::write(&bat_path, bat_content)?;
 
-            let sh_content = format!(
-                "#!/bin/sh\n\
-                sleep 2\n\
-                kill -9 {pid} 2>/dev/null || true\n\
-                cp -rf \"{staging}/.\" \"{target}/\"\n\
-                rm -f \"{target}/cores/hysteria\" \"{target}/cores/geoip.dat\" \"{target}/cores/geosite.dat\"\n\
-                chmod +x \"{exe}\"\n\
-                nohup \"{exe}\" >/dev/null 2>&1 &\n\
-                rm -rf \"{staging}\"\n\
-                rm -f \"$0\"\n",
-                pid = current_pid,
-                staging = staging_dir.display(),
-                target = target_dir.display(),
-                exe = current_exe.display(),
-            );
+        info!("Spawning update.bat script: {:?}", bat_path);
+        let _ = std::process::Command::new("cmd.exe")
+            .args(["/C", bat_path.to_str().unwrap()])
+            .spawn();
 
-            let sh_path = temp_dir.join("update.sh");
-            std::fs::write(&sh_path, &sh_content)?;
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let perms = std::fs::Permissions::from_mode(0o755);
-                let _ = std::fs::set_permissions(&sh_path, perms);
-            }
-
-            info!("Spawning update.sh script: {:?}", sh_path);
-            let _ = std::process::Command::new("sh")
-                .arg(sh_path.to_str().unwrap())
-                .spawn();
-
-            std::process::exit(0);
-        }
+        std::process::exit(0);
     }
 }
 
@@ -735,24 +619,12 @@ mod tests {
 
     #[test]
     fn test_core_components_list() {
-        #[cfg(target_os = "windows")]
-        {
-            assert_eq!(CORE_COMPONENTS.len(), 5);
-            assert!(CORE_COMPONENTS.contains(&"sing-box.exe"));
-            assert!(CORE_COMPONENTS.contains(&"xray.exe"));
-            assert!(CORE_COMPONENTS.contains(&"wintun.dll"));
-            assert!(CORE_COMPONENTS.contains(&"geosite-ru.srs"));
-            assert!(CORE_COMPONENTS.contains(&"geoip-ru.srs"));
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            assert_eq!(CORE_COMPONENTS.len(), 5);
-            assert!(CORE_COMPONENTS.contains(&"sing-box"));
-            assert!(CORE_COMPONENTS.contains(&"xray"));
-            assert!(CORE_COMPONENTS.contains(&"wintun.dll"));
-            assert!(CORE_COMPONENTS.contains(&"geosite-ru.srs"));
-            assert!(CORE_COMPONENTS.contains(&"geoip-ru.srs"));
-        }
+        assert_eq!(CORE_COMPONENTS.len(), 5);
+        assert!(CORE_COMPONENTS.contains(&"sing-box.exe"));
+        assert!(CORE_COMPONENTS.contains(&"xray.exe"));
+        assert!(CORE_COMPONENTS.contains(&"wintun.dll"));
+        assert!(CORE_COMPONENTS.contains(&"geosite-ru.srs"));
+        assert!(CORE_COMPONENTS.contains(&"geoip-ru.srs"));
     }
 
     #[test]
@@ -772,8 +644,8 @@ mod tests {
 
     #[test]
     fn test_current_version() {
-        assert_eq!(CURRENT_VERSION, "1.5.2");
-        assert_eq!(parse_version_tuple(CURRENT_VERSION), Some((1, 5, 2)));
+        assert_eq!(CURRENT_VERSION, "1.5.3");
+        assert_eq!(parse_version_tuple(CURRENT_VERSION), Some((1, 5, 3)));
     }
 
     #[test]
@@ -815,7 +687,7 @@ mod tests {
         let svc = UpdaterService::new();
         let url = format!("http://{}/test.bin", addr);
         let bytes = svc
-            .download_bytes_with_retry(&[url.clone()], "test binary")
+            .download_bytes_with_retry(std::slice::from_ref(&url), "test binary")
             .await
             .expect("should succeed on 3rd attempt");
         assert_eq!(bytes, b"PAYLOAD");

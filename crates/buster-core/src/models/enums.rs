@@ -96,18 +96,3 @@ pub enum ServerProtocol {
     ShadowTls,
     AnyTls,
 }
-
-/// Selectable accent gradient for the dark obsidian shell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-#[repr(u8)]
-pub enum AccentTheme {
-    /// Cyber indigo to cyan (default).
-    #[default]
-    Default = 0,
-    /// Pastel pink.
-    Piglet = 1,
-    /// Deep violet to bright purple.
-    Purplin = 2,
-    /// Warm red to gold.
-    Sunset = 3,
-}

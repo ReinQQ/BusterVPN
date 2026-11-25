@@ -24,16 +24,13 @@ fn main() {
     let _ = std::fs::create_dir_all(&cores_dir);
 
     // If cores are not in AppData, check next to the executable
-    let singbox_name = if cfg!(target_os = "windows") { "sing-box.exe" } else { "sing-box" };
+    let singbox_name = "sing-box.exe";
     if !cores_dir.join(singbox_name).exists() {
         if let Ok(exe_path) = std::env::current_exe() {
             if let Some(exe_dir) = exe_path.parent() {
-                let local_cores_linux = exe_dir.join("cores-linux");
                 let local_cores = exe_dir.join("cores");
                 if local_cores.join(singbox_name).exists() {
                     cores_dir = local_cores;
-                } else if local_cores_linux.join(singbox_name).exists() {
-                    cores_dir = local_cores_linux;
                 }
             }
         }
@@ -89,17 +86,8 @@ fn main() {
             let settings_store = app_state.settings_store.clone();
             tauri::async_runtime::spawn(async move {
                 if let Ok(settings) = settings_store.load().await {
-                    #[cfg(target_os = "windows")]
-                    {
-                        if settings.start_with_windows && !buster_windows::autostart::is_autostart_enabled() {
-                            let _ = buster_windows::autostart::enable_autostart(None);
-                        }
-                    }
-                    #[cfg(target_os = "linux")]
-                    {
-                        if settings.start_with_windows && !buster_app::platform::is_autostart_enabled() {
-                            let _ = buster_app::platform::configure_autostart(true);
-                        }
+                    if settings.start_with_windows && !buster_windows::autostart::is_autostart_enabled() {
+                        let _ = buster_windows::autostart::enable_autostart(None);
                     }
                 }
             });
@@ -130,11 +118,7 @@ fn main() {
                 }
             });
 
-            #[cfg(target_os = "windows")]
             let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.ico"))
-                .unwrap_or_else(|_| app.default_window_icon().unwrap().clone());
-            #[cfg(not(target_os = "windows"))]
-            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png"))
                 .unwrap_or_else(|_| app.default_window_icon().unwrap().clone());
 
             let _tray = TrayIconBuilder::with_id(buster_app::tray::TRAY_ID)
@@ -239,24 +223,9 @@ fn main() {
 }
 
 fn dirs_app_data_path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            PathBuf::from(local).join("BusterVPN")
-        } else {
-            PathBuf::from(".bustervpn")
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(home) = std::env::var("HOME") {
-            PathBuf::from(home).join(".config").join("bustervpn")
-        } else {
-            PathBuf::from(".bustervpn")
-        }
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        PathBuf::from(local).join("BusterVPN")
+    } else {
         PathBuf::from(".bustervpn")
     }
 }

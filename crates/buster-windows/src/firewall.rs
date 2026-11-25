@@ -98,7 +98,7 @@ impl FirewallKillSwitch {
                 &rules,
                 KS_RULE_ALLOW_LOOPBACK,
                 NET_FW_ACTION_ALLOW,
-                NET_FW_IP_PROTOCOL_ANY.0 as i32,
+                NET_FW_IP_PROTOCOL_ANY.0,
                 None,
                 None,
                 None,
@@ -117,7 +117,7 @@ impl FirewallKillSwitch {
                     &rules,
                     KS_RULE_ALLOW_SERVER,
                     NET_FW_ACTION_ALLOW,
-                    NET_FW_IP_PROTOCOL_ANY.0 as i32,
+                    NET_FW_IP_PROTOCOL_ANY.0,
                     None,
                     None,
                     None,
@@ -130,7 +130,7 @@ impl FirewallKillSwitch {
                 &rules,
                 KS_RULE_ALLOW_TUN,
                 NET_FW_ACTION_ALLOW,
-                NET_FW_IP_PROTOCOL_ANY.0 as i32,
+                NET_FW_IP_PROTOCOL_ANY.0,
                 None,
                 None,
                 None,
@@ -144,7 +144,7 @@ impl FirewallKillSwitch {
                     &rules,
                     KS_RULE_CORE,
                     NET_FW_ACTION_ALLOW,
-                    NET_FW_IP_PROTOCOL_ANY.0 as i32,
+                    NET_FW_IP_PROTOCOL_ANY.0,
                     Some(&exe_str),
                     None,
                     None,
@@ -159,7 +159,7 @@ impl FirewallKillSwitch {
                 &rules,
                 KS_RULE_DNS_UDP,
                 NET_FW_ACTION_ALLOW,
-                NET_FW_IP_PROTOCOL_UDP.0 as i32,
+                NET_FW_IP_PROTOCOL_UDP.0,
                 Some(&svchost_str),
                 None,
                 Some("53"),
@@ -169,7 +169,7 @@ impl FirewallKillSwitch {
                 &rules,
                 KS_RULE_DNS_TCP,
                 NET_FW_ACTION_ALLOW,
-                NET_FW_IP_PROTOCOL_TCP.0 as i32,
+                NET_FW_IP_PROTOCOL_TCP.0,
                 Some(&svchost_str),
                 None,
                 Some("53"),
@@ -179,7 +179,7 @@ impl FirewallKillSwitch {
                 &rules,
                 KS_RULE_DHCP,
                 NET_FW_ACTION_ALLOW,
-                NET_FW_IP_PROTOCOL_UDP.0 as i32,
+                NET_FW_IP_PROTOCOL_UDP.0,
                 Some(&svchost_str),
                 Some("68"),
                 Some("67"),
@@ -191,7 +191,7 @@ impl FirewallKillSwitch {
                 &rules,
                 KS_RULE_BLOCK_ALL,
                 NET_FW_ACTION_BLOCK,
-                NET_FW_IP_PROTOCOL_ANY.0 as i32,
+                NET_FW_IP_PROTOCOL_ANY.0,
                 None,
                 None,
                 None,
@@ -285,6 +285,7 @@ impl FirewallKillSwitch {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn add_rule(
         &self,
         rules: &INetFwRules,
@@ -305,7 +306,7 @@ impl FirewallKillSwitch {
             rule.SetEnabled(VARIANT_TRUE)?;
             rule.SetDirection(NET_FW_RULE_DIR_OUT)?;
             rule.SetAction(action)?;
-            rule.SetProfiles(NET_FW_PROFILE2_ALL.0 as i32)?;
+            rule.SetProfiles(NET_FW_PROFILE2_ALL.0)?;
             rule.SetProtocol(protocol)?;
 
             if let Some(app) = app_name {

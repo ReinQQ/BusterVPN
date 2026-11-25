@@ -166,7 +166,7 @@ pub fn clash_item_to_share_link(item: &Value) -> Option<String> {
                     query_params.push(format!("path={}", utf8_percent_encode(path, NON_ALPHANUMERIC)));
                 }
                 if let Some(headers) = ws_opts.get("headers").and_then(|h| h.as_mapping()) {
-                    if let Some(host) = headers.get(&Value::String("Host".to_string())).and_then(|h| h.as_str()) {
+                    if let Some(host) = headers.get(Value::String("Host".to_string())).and_then(|h| h.as_str()) {
                         query_params.push(format!("host={}", host));
                     }
                 }

@@ -46,7 +46,7 @@ let mockSettings = {
 };
 
 let mockLogs = [
-  { level: 'info', stream: 'stdout', text: 'BusterVPN Core v1.5.2 initialized on Windows 11', message: 'BusterVPN Core v1.5.2 initialized on Windows 11', timestamp: new Date().toISOString() },
+  { level: 'info', stream: 'stdout', text: 'BusterVPN Core v1.5.3 initialized on Windows 11', message: 'BusterVPN Core v1.5.3 initialized on Windows 11', timestamp: new Date().toISOString() },
   { level: 'info', stream: 'stdout', text: 'Safe Job Object limits applied: KILL_ON_JOB_CLOSE', message: 'Safe Job Object limits applied: KILL_ON_JOB_CLOSE', timestamp: new Date().toISOString() },
   { level: 'info', stream: 'stdout', text: 'Ready to connect. All route engines stand by.', message: 'Ready to connect. All route engines stand by.', timestamp: new Date().toISOString() },
 ];
@@ -194,8 +194,8 @@ function mockInvoke(cmd, args) {
         case 'check_update':
           resolve({
             update_available: false,
-            current_version: '1.5.2',
-            latest_version: '1.5.2',
+            current_version: '1.5.3',
+            latest_version: '1.5.3',
             download_url: null,
             release_notes: null,
           });

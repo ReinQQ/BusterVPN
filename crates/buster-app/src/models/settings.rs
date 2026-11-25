@@ -1,7 +1,7 @@
 //! Application settings models and defaults.
 
 use buster_core::models::{
-    DnsProfile, RoutingMode, RoutingOptions, RoutingRule, SplitTunnelingConfig,
+    DnsProfile, RoutingMode, RoutingRule, SplitTunnelingConfig,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -101,15 +101,5 @@ impl AppSettings {
     /// Computes the effective routing mode based on independent switches.
     pub fn effective_routing_mode(&self) -> RoutingMode {
         RoutingMode::from_switches(self.is_tun_enabled, self.is_system_proxy_enabled)
-    }
-
-    /// Converts settings to `RoutingOptions` required by config builders.
-    pub fn to_routing_options(&self) -> RoutingOptions {
-        RoutingOptions {
-            bypass_local_networks: self.bypass_local_networks,
-            rules: self.routing_rules.iter().filter(|r| r.enabled).cloned().collect(),
-            split_tunneling: self.split_tunneling.clone(),
-            dns_profile: self.dns_profile,
-        }
     }
 }

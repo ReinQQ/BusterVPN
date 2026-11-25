@@ -61,13 +61,6 @@ impl SettingsStore {
             .await
             .with_context(|| format!("Failed to write temp file {}", temp_path.display()))?;
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            let _ = std::fs::set_permissions(&temp_path, perms);
-        }
-
         tokio::fs::rename(&temp_path, &self.path)
             .await
             .with_context(|| format!("Failed to rename temp file to {}", self.path.display()))?;
@@ -86,9 +79,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("buster_test_settings_{}", uuid::Uuid::new_v4()));
         let store = SettingsStore::new(dir.join("settings.json"));
 
-        let mut settings = AppSettings::default();
-        settings.is_tun_enabled = true;
-        settings.kill_switch = true;
+        let settings = AppSettings {
+            is_tun_enabled: true,
+            kill_switch: true,
+            ..Default::default()
+        };
 
         store.save(&settings).await.expect("save settings");
 

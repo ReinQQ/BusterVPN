@@ -30,12 +30,12 @@ pub fn protect(plaintext: &[u8], purpose: &str) -> Result<Vec<u8>, WindowsError>
 
     let entropy = derive_entropy(purpose);
 
-    let mut in_blob = CRYPT_INTEGER_BLOB {
+    let in_blob = CRYPT_INTEGER_BLOB {
         cbData: plaintext.len() as u32,
         pbData: plaintext.as_ptr() as *mut u8,
     };
 
-    let mut entropy_blob = CRYPT_INTEGER_BLOB {
+    let entropy_blob = CRYPT_INTEGER_BLOB {
         cbData: entropy.len() as u32,
         pbData: entropy.as_ptr() as *mut u8,
     };
@@ -44,9 +44,9 @@ pub fn protect(plaintext: &[u8], purpose: &str) -> Result<Vec<u8>, WindowsError>
 
     unsafe {
         CryptProtectData(
-            &mut in_blob,
+            &in_blob,
             PWSTR::null(),
-            Some(&mut entropy_blob),
+            Some(&entropy_blob),
             None,
             None,
             CRYPTPROTECT_UI_FORBIDDEN,
@@ -80,12 +80,12 @@ pub fn unprotect(ciphertext: &[u8], purpose: &str) -> Result<Vec<u8>, WindowsErr
 
     let entropy = derive_entropy(purpose);
 
-    let mut in_blob = CRYPT_INTEGER_BLOB {
+    let in_blob = CRYPT_INTEGER_BLOB {
         cbData: ciphertext.len() as u32,
         pbData: ciphertext.as_ptr() as *mut u8,
     };
 
-    let mut entropy_blob = CRYPT_INTEGER_BLOB {
+    let entropy_blob = CRYPT_INTEGER_BLOB {
         cbData: entropy.len() as u32,
         pbData: entropy.as_ptr() as *mut u8,
     };
@@ -94,9 +94,9 @@ pub fn unprotect(ciphertext: &[u8], purpose: &str) -> Result<Vec<u8>, WindowsErr
 
     unsafe {
         CryptUnprotectData(
-            &mut in_blob,
+            &in_blob,
             None,
-            Some(&mut entropy_blob),
+            Some(&entropy_blob),
             None,
             None,
             CRYPTPROTECT_UI_FORBIDDEN,

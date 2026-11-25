@@ -221,7 +221,7 @@ async fn cmd_connect(profile_target: Option<&str>) -> Result<()> {
     let is_vless = parsed
         .xray
         .as_ref()
-        .map_or(false, |x| x.protocol == XrayProtocol::Vless);
+        .is_some_and(|x| x.protocol == XrayProtocol::Vless);
 
     let mut sidecar_config: Option<String> = None;
     let mut sidecar_filename: Option<String> = None;

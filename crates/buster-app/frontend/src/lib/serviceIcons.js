@@ -1,5 +1,5 @@
 /**
- * Crisp SVG service and application icon definitions for BusterVPN v1.5.2.
+ * Crisp SVG service and application icon definitions for BusterVPN v1.5.3.
  * Recognized across Routing rules, App split-tunneling, and Logs.
  */
 

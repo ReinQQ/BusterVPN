@@ -42,7 +42,7 @@ pub fn build_tray_menu<R: Runtime>(
         server_items.push(Box::new(empty_item));
     } else {
         for profile in profiles {
-            let is_active = active_profile_name.map_or(false, |n| n == profile.name);
+            let is_active = active_profile_name.is_some_and(|n| n == profile.name);
             let item_id = format!("select_profile_{}", profile.id);
             let label = if is_active {
                 format!("✓ {}", profile.name)

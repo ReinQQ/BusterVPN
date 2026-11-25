@@ -82,10 +82,7 @@ pub struct BusterServiceClient;
 impl BusterServiceClient {
     /// Tests if the named pipe can be opened.
     pub async fn is_service_available() -> bool {
-        match ClientOptions::new().open(PIPE_NAME) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        ClientOptions::new().open(PIPE_NAME).is_ok()
     }
 
     /// Sends an IPC request over the named pipe and awaits the response.

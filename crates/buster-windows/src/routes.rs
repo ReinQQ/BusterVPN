@@ -52,28 +52,6 @@ pub fn is_elevated() -> bool {
     }
 }
 
-/// Verifies that `wintun.dll` exists and has a plausible file size.
-pub fn verify_wintun(wintun_path: &Path) -> Result<(), WindowsError> {
-    if !wintun_path.exists() {
-        return Err(WindowsError::ProcessStart(format!(
-            "wintun.dll not found at '{}'. Please place wintun.dll in the core directory",
-            wintun_path.display()
-        )));
-    }
-
-    let metadata = std::fs::metadata(wintun_path).map_err(|e| {
-        WindowsError::ProcessStart(format!("Failed to read wintun.dll metadata: {}", e))
-    })?;
-
-    if metadata.len() < 16 * 1024 {
-        return Err(WindowsError::ProcessStart(
-            "wintun.dll is present but suspiciously small (<16 KB). Please use official Wintun runtime".to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
 /// Resolves a server host name (or IP string) to distinct IPv4 addresses.
 pub fn resolve_server_ipv4(server_host: &str) -> Result<Vec<String>, WindowsError> {
     let host = server_host.trim().trim_matches('[').trim_matches(']');
@@ -145,11 +123,13 @@ pub fn parse_default_gateway(route_output: &str) -> Option<String> {
             let metric: u32 = tokens.last().and_then(|m| m.parse().ok()).unwrap_or(u32::MAX);
 
             // Filter out non-routable gateways or loopback
-            if gateway != "On-link" && gateway != "127.0.0.1" && gateway != "0.0.0.0" {
-                if metric < lowest_metric {
-                    lowest_metric = metric;
-                    best_gateway = Some(gateway.to_string());
-                }
+            if gateway != "On-link"
+                && gateway != "127.0.0.1"
+                && gateway != "0.0.0.0"
+                && metric < lowest_metric
+            {
+                lowest_metric = metric;
+                best_gateway = Some(gateway.to_string());
             }
         }
     }

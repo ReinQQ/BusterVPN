@@ -35,18 +35,6 @@ impl SubscriptionUserInfo {
         self.total_bytes <= 0
     }
 
-    pub fn remaining_bytes(&self) -> i64 {
-        if self.is_unlimited() {
-            0
-        } else {
-            (self.total_bytes - self.used_bytes()).max(0)
-        }
-    }
-
-    pub fn is_expired(&self) -> bool {
-        self.expires_at_utc.map_or(false, |exp| exp <= Utc::now())
-    }
-
     /// Parses values from the `Subscription-Userinfo` HTTP header:
     /// e.g. "upload=1000; download=2000; total=10000000; expire=1700000000"
     pub fn parse(header_value: &str) -> Option<Self> {

@@ -98,48 +98,6 @@ impl Default for SplitTunnelingConfig {
     }
 }
 
-impl SplitTunnelingConfig {
-    pub fn get_bypass_apps(&self) -> Vec<String> {
-        let mut list = Vec::new();
-        for a in &self.bypass_apps {
-            let clean = a.trim().to_lowercase();
-            if !clean.is_empty() && !list.contains(&clean) {
-                list.push(clean);
-            }
-        }
-        // Backward compatibility: if mode is BypassSelected and legacy apps has entries
-        if self.mode == SplitTunnelMode::BypassSelected {
-            for a in &self.apps {
-                let clean = a.trim().to_lowercase();
-                if !clean.is_empty() && !list.contains(&clean) {
-                    list.push(clean);
-                }
-            }
-        }
-        list
-    }
-
-    pub fn get_proxy_apps(&self) -> Vec<String> {
-        let mut list = Vec::new();
-        for a in &self.proxy_apps {
-            let clean = a.trim().to_lowercase();
-            if !clean.is_empty() && !list.contains(&clean) {
-                list.push(clean);
-            }
-        }
-        // Backward compatibility: if mode is ProxySelected and legacy apps has entries
-        if self.mode == SplitTunnelMode::ProxySelected {
-            for a in &self.apps {
-                let clean = a.trim().to_lowercase();
-                if !clean.is_empty() && !list.contains(&clean) {
-                    list.push(clean);
-                }
-            }
-        }
-        list
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DnsProfile {
     #[default]
@@ -159,29 +117,6 @@ impl DnsProfile {
         }
     }
 }
-
-pub const PRIVATE_IPV4_CIDRS: &[&str] = &[
-    "10.0.0.0/8",
-    "127.0.0.0/8",
-    "169.254.0.0/16",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "224.0.0.0/4",
-];
-
-pub const PRIVATE_IPV6_CIDRS: &[&str] = &[
-    "::1/128",
-    "fc00::/7",
-    "fe80::/10",
-    "ff00::/8",
-];
-
-pub const LOCAL_DOMAIN_SUFFIXES: &[&str] = &[
-    "localhost",
-    "local",
-    "lan",
-    "home.arpa",
-];
 
 /// Converts Unicode domains to ASCII/IDNA (punycode) format.
 pub fn to_idn_ascii(domain: &str) -> String {

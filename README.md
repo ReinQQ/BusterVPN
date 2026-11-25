@@ -2,7 +2,7 @@
 
 # BusterVPN
 
-![Version](https://img.shields.io/badge/version-1.5.2-blue)
+![Version](https://img.shields.io/badge/version-1.5.3-blue)
 ![Rust](https://img.shields.io/badge/Rust-2021%20Edition-orange?logo=rust)
 ![Tauri](https://img.shields.io/badge/Tauri-v2-24C8DB?logo=tauri)
 ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00?logo=svelte)
@@ -15,7 +15,7 @@ Built with Rust, Tauri v2, Svelte 5, and Tailwind CSS. Powered by a high-perform
 
 </div>
 
-## Architecture Overview (v1.5.2)
+## Architecture Overview (v1.5.3)
 
 BusterVPN decouples privileged network configuration from the unprivileged user interface. The system comprises five modular components:
 
@@ -70,7 +70,7 @@ BusterVPN decouples privileged network configuration from the unprivileged user 
 
 ## Hybrid Engine & Protocol Support
 
-BusterVPN v1.5.2 features an optimized hybrid engine combining `sing-box.exe` and `xray.exe`:
+BusterVPN v1.5.3 features an optimized hybrid engine combining `sing-box.exe` and `xray.exe`:
 
 ### 1. Primary Engine: Sing-box Core (`sing-box.exe` v1.14+)
 Provides system-wide TUN routing and protocol handling using compiled `.srs` (`rule_set`) binary databases (`geosite-ru.srs`, `geoip-ru.srs`):
@@ -140,7 +140,7 @@ busterctl service uninstall
 ## Building from Source
 
 ### Prerequisites
-- Windows 10 / 11 (x64) or Linux (x86_64)
+- Windows 10 / 11 (x64)
 - Rust 1.85+ with MSVC toolchain (`x86_64-pc-windows-msvc`)
 - Node.js 20+ and npm
 - Visual Studio Build Tools (C++ workload)

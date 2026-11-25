@@ -78,8 +78,8 @@ pub fn split_list(value: &str) -> Vec<String> {
 
 /// Parses common boolean representations ("1", "true", "yes").
 pub fn parse_bool(value: Option<&str>) -> bool {
-    match value.map(|s| s.trim().to_lowercase()).as_deref() {
-        Some("1") | Some("true") | Some("yes") => true,
-        _ => false,
-    }
+    matches!(
+        value.map(|s| s.trim().to_lowercase()).as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    )
 }

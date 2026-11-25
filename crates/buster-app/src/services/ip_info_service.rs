@@ -84,7 +84,7 @@ impl IpInfoService {
         let direct_client = reqwest::Client::builder()
             .connect_timeout(Duration::from_millis(1500))
             .timeout(Duration::from_millis(2500))
-            .user_agent("BusterVPN-Client/1.5.2")
+            .user_agent("BusterVPN-Client/1.5.3")
             .build()
             .unwrap_or_default();
 
@@ -97,7 +97,7 @@ impl IpInfoService {
             .connect_timeout(Duration::from_millis(1500))
             .timeout(Duration::from_millis(2500))
             .proxy(proxy)
-            .user_agent("BusterVPN-Client/1.5.2")
+            .user_agent("BusterVPN-Client/1.5.3")
             .build()
             .ok()
     }
@@ -203,19 +203,18 @@ fn is_private_or_local_ip(ip: &IpAddr) -> bool {
                     if !expected_trimmed.is_empty() {
                         let detected_str = detected_ip.to_string();
                         if let Ok(expected_ip) = expected_trimmed.parse::<IpAddr>() {
-                            if detected_ip.is_ipv4() == expected_ip.is_ipv4() {
-                                if detected_ip != expected_ip {
-                                    is_leaking = true;
-                                    status_text = format!("Обнаружена утечка через WebRTC: {}", detected_str);
-                                }
-                            }
-                        } else if !detected_str.eq_ignore_ascii_case(expected_trimmed) {
-                            if (detected_ip.is_ipv4() && !expected_trimmed.contains(':'))
-                                || (detected_ip.is_ipv6() && expected_trimmed.contains(':'))
+                            if detected_ip.is_ipv4() == expected_ip.is_ipv4()
+                                && detected_ip != expected_ip
                             {
                                 is_leaking = true;
                                 status_text = format!("Обнаружена утечка через WebRTC: {}", detected_str);
                             }
+                        } else if !detected_str.eq_ignore_ascii_case(expected_trimmed)
+                            && ((detected_ip.is_ipv4() && !expected_trimmed.contains(':'))
+                                || (detected_ip.is_ipv6() && expected_trimmed.contains(':')))
+                        {
+                            is_leaking = true;
+                            status_text = format!("Обнаружена утечка через WebRTC: {}", detected_str);
                         }
                     }
                 }
@@ -251,19 +250,18 @@ fn is_private_or_local_ip(ip: &IpAddr) -> bool {
                     if !expected_trimmed.is_empty() {
                         let detected_str = detected_ip.to_string();
                         if let Ok(expected_parsed) = expected_trimmed.parse::<IpAddr>() {
-                            if detected_ip.is_ipv4() == expected_parsed.is_ipv4() {
-                                if detected_ip != expected_parsed {
-                                    webrtc_leaking = true;
-                                    webrtc_status = format!("Обнаружена утечка через WebRTC: {}", detected_str);
-                                }
-                            }
-                        } else if !detected_str.eq_ignore_ascii_case(expected_trimmed) {
-                            if (detected_ip.is_ipv4() && !expected_trimmed.contains(':'))
-                                || (detected_ip.is_ipv6() && expected_trimmed.contains(':'))
+                            if detected_ip.is_ipv4() == expected_parsed.is_ipv4()
+                                && detected_ip != expected_parsed
                             {
                                 webrtc_leaking = true;
                                 webrtc_status = format!("Обнаружена утечка через WebRTC: {}", detected_str);
                             }
+                        } else if !detected_str.eq_ignore_ascii_case(expected_trimmed)
+                            && ((detected_ip.is_ipv4() && !expected_trimmed.contains(':'))
+                                || (detected_ip.is_ipv6() && expected_trimmed.contains(':')))
+                        {
+                            webrtc_leaking = true;
+                            webrtc_status = format!("Обнаружена утечка через WebRTC: {}", detected_str);
                         }
                     }
                 }
@@ -458,8 +456,8 @@ fn is_private_or_local_ip(ip: &IpAddr) -> bool {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0x42);
-            for i in 0..12 {
-                tx_id[i] = ((seed >> (i * 5)) & 0xFF) as u8;
+            for (i, byte) in tx_id.iter_mut().enumerate() {
+                *byte = ((seed >> (i * 5)) & 0xFF) as u8;
             }
 
             let packet = Self::create_stun_binding_request(&tx_id);

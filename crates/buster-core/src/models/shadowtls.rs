@@ -2,6 +2,19 @@ use serde::{Deserialize, Serialize};
 use crate::models::ConfigurationError;
 use crate::parsing::validation::{is_valid_host, is_valid_port};
 
+fn validate_tls_client(host: &str, port: u16, password: &str) -> Result<(), ConfigurationError> {
+    if !is_valid_host(host) {
+        return Err(ConfigurationError::InvalidServerHost(host.to_string()));
+    }
+    if !is_valid_port(port as u32) {
+        return Err(ConfigurationError::InvalidServerPort(port as u32));
+    }
+    if password.trim().is_empty() {
+        return Err(ConfigurationError::EmptyCredential);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShadowTlsClientConfig {
     pub host: String,
@@ -13,16 +26,7 @@ pub struct ShadowTlsClientConfig {
 
 impl ShadowTlsClientConfig {
     pub fn validate(&self) -> Result<(), ConfigurationError> {
-        if !is_valid_host(&self.host) {
-            return Err(ConfigurationError::InvalidServerHost(self.host.clone()));
-        }
-        if !is_valid_port(self.port as u32) {
-            return Err(ConfigurationError::InvalidServerPort(self.port as u32));
-        }
-        if self.password.trim().is_empty() {
-            return Err(ConfigurationError::EmptyCredential);
-        }
-        Ok(())
+        validate_tls_client(&self.host, self.port, &self.password)
     }
 }
 
@@ -37,15 +41,6 @@ pub struct AnyTlsClientConfig {
 
 impl AnyTlsClientConfig {
     pub fn validate(&self) -> Result<(), ConfigurationError> {
-        if !is_valid_host(&self.host) {
-            return Err(ConfigurationError::InvalidServerHost(self.host.clone()));
-        }
-        if !is_valid_port(self.port as u32) {
-            return Err(ConfigurationError::InvalidServerPort(self.port as u32));
-        }
-        if self.password.trim().is_empty() {
-            return Err(ConfigurationError::EmptyCredential);
-        }
-        Ok(())
+        validate_tls_client(&self.host, self.port, &self.password)
     }
 }

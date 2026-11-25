@@ -28,15 +28,6 @@ impl SessionJournal {
         Self { journal_path }
     }
 
-    /// Default journal path in AppData/Local/BusterVPN/session.json
-    pub fn default_path() -> PathBuf {
-        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-            PathBuf::from(local_app_data).join("BusterVPN").join("session.json")
-        } else {
-            PathBuf::from("session.json")
-        }
-    }
-
     /// Records the running core process ID and executable path into the journal.
     pub fn record(&self, process_id: u32, core_path: &Path) -> Result<(), WindowsError> {
         let entry = SessionJournalEntry {
@@ -50,7 +41,7 @@ impl SessionJournal {
         }
 
         let json = serde_json::to_string_pretty(&entry)
-            .map_err(|e| WindowsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| WindowsError::Io(std::io::Error::other(e)))?;
 
         let temp_path = self.journal_path.with_extension("tmp");
         std::fs::write(&temp_path, json).map_err(WindowsError::Io)?;

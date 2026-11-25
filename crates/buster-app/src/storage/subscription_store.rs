@@ -1,8 +1,7 @@
 //! Secure Subscription Registry Store.
 //!
 //! Features:
-//! - On Windows: Windows DPAPI encryption with purpose `"SubscriptionStore"` and magic header `b"BVPN2"`.
-//! - On Linux: JSON configuration files with strict file permissions (0o600 via PermissionsExt) in $HOME/.config/bustervpn/.
+//! - Windows DPAPI encryption with purpose `"SubscriptionStore"` and magic header `b"BVPN2"`.
 //! - Atomic persistence (write to `.tmp` then rename).
 //! - Non-destructive quarantine on errors.
 
@@ -12,13 +11,9 @@ use tokio::sync::Mutex;
 use chrono::Utc;
 use crate::models::SubscriptionRecord;
 use anyhow::{Context, Result};
-
-#[cfg(target_os = "windows")]
 use buster_windows::dpapi;
 
-#[cfg(target_os = "windows")]
 const MAGIC: &[u8] = b"BVPN2";
-#[cfg(target_os = "windows")]
 const PURPOSE: &str = "SubscriptionStore";
 
 pub struct SubscriptionStore {
@@ -38,82 +33,50 @@ impl SubscriptionStore {
     pub async fn load(&self) -> Result<Vec<SubscriptionRecord>> {
         let _guard = self.gate.lock().await;
 
-        #[cfg(target_os = "windows")]
-        {
-            if !self.path.exists() {
-                let json_path = self.path.with_file_name("subscriptions.json");
-                if json_path.exists() {
-                    if let Ok(content) = tokio::fs::read_to_string(&json_path).await {
-                        if let Ok(records) = serde_json::from_str::<Vec<SubscriptionRecord>>(&content) {
-                            tracing::info!("Loaded {} subscription record(s) from JSON fallback", records.len());
-                            return Ok(records);
-                        }
+        if !self.path.exists() {
+            let json_path = self.path.with_file_name("subscriptions.json");
+            if json_path.exists() {
+                if let Ok(content) = tokio::fs::read_to_string(&json_path).await {
+                    if let Ok(records) = serde_json::from_str::<Vec<SubscriptionRecord>>(&content) {
+                        tracing::info!("Loaded {} subscription record(s) from JSON fallback", records.len());
+                        return Ok(records);
                     }
                 }
-                return Ok(Vec::new());
             }
-
-            let content = tokio::fs::read(&self.path)
-                .await
-                .with_context(|| format!("Failed to read subscription store at {}", self.path.display()))?;
-
-            if content.len() <= MAGIC.len() || !content.starts_with(MAGIC) {
-                tracing::warn!("Invalid magic header in subscription store, quarantining");
-                self.quarantine("invalid_header").await?;
-                return Ok(Vec::new());
-            }
-
-            let ciphertext = &content[MAGIC.len()..];
-            let plaintext = match dpapi::unprotect(ciphertext, PURPOSE) {
-                Ok(pt) => pt,
-                Err(e) => {
-                    tracing::error!("DPAPI decryption failed for subscription store: {}", e);
-                    self.quarantine("decryption_failed").await?;
-                    return Ok(Vec::new());
-                }
-            };
-
-            let records: Vec<SubscriptionRecord> = match serde_json::from_slice(&plaintext) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!("Failed to parse subscription JSON: {}", e);
-                    self.quarantine("json_parse_failed").await?;
-                    return Ok(Vec::new());
-                }
-            };
-
-            tracing::info!("Loaded {} subscription record(s)", records.len());
-            Ok(records)
+            return Ok(Vec::new());
         }
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            let target_path = if self.path.exists() {
-                self.path.clone()
-            } else {
-                self.path.with_file_name("subscriptions.json")
-            };
+        let content = tokio::fs::read(&self.path)
+            .await
+            .with_context(|| format!("Failed to read subscription store at {}", self.path.display()))?;
 
-            if !target_path.exists() {
+        if content.len() <= MAGIC.len() || !content.starts_with(MAGIC) {
+            tracing::warn!("Invalid magic header in subscription store, quarantining");
+            self.quarantine("invalid_header").await?;
+            return Ok(Vec::new());
+        }
+
+        let ciphertext = &content[MAGIC.len()..];
+        let plaintext = match dpapi::unprotect(ciphertext, PURPOSE) {
+            Ok(pt) => pt,
+            Err(e) => {
+                tracing::error!("DPAPI decryption failed for subscription store: {}", e);
+                self.quarantine("decryption_failed").await?;
                 return Ok(Vec::new());
             }
+        };
 
-            let content = tokio::fs::read(&target_path)
-                .await
-                .with_context(|| format!("Failed to read subscription store at {}", target_path.display()))?;
+        let records: Vec<SubscriptionRecord> = match serde_json::from_slice(&plaintext) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Failed to parse subscription JSON: {}", e);
+                self.quarantine("json_parse_failed").await?;
+                return Ok(Vec::new());
+            }
+        };
 
-            let records: Vec<SubscriptionRecord> = match serde_json::from_slice(&content) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!("Failed to parse subscription JSON: {}", e);
-                    self.quarantine("json_parse_failed").await?;
-                    return Ok(Vec::new());
-                }
-            };
-
-            tracing::info!("Loaded {} subscription record(s)", records.len());
-            Ok(records)
-        }
+        tracing::info!("Loaded {} subscription record(s)", records.len());
+        Ok(records)
     }
 
     /// Atomically persists subscription records.
@@ -124,72 +87,30 @@ impl SubscriptionStore {
             tokio::fs::create_dir_all(parent)
                 .await
                 .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
-            }
         }
 
-        #[cfg(target_os = "windows")]
-        {
-            let plaintext = serde_json::to_vec(records)
-                .context("Failed to serialize subscription records to JSON")?;
+        let plaintext = serde_json::to_vec(records)
+            .context("Failed to serialize subscription records to JSON")?;
 
-            let ciphertext = dpapi::protect(&plaintext, PURPOSE)
-                .context("Failed to encrypt subscription records with DPAPI")?;
+        let ciphertext = dpapi::protect(&plaintext, PURPOSE)
+            .context("Failed to encrypt subscription records with DPAPI")?;
 
-            let mut payload = Vec::with_capacity(MAGIC.len() + ciphertext.len());
-            payload.extend_from_slice(MAGIC);
-            payload.extend_from_slice(&ciphertext);
+        let mut payload = Vec::with_capacity(MAGIC.len() + ciphertext.len());
+        payload.extend_from_slice(MAGIC);
+        payload.extend_from_slice(&ciphertext);
 
-            let temp_path = self.path.with_extension("tmp");
-            tokio::fs::write(&temp_path, &payload)
-                .await
-                .with_context(|| format!("Failed to write temp file {}", temp_path.display()))?;
+        let temp_path = self.path.with_extension("tmp");
+        tokio::fs::write(&temp_path, &payload)
+            .await
+            .with_context(|| format!("Failed to write temp file {}", temp_path.display()))?;
 
-            tokio::fs::rename(&temp_path, &self.path)
-                .await
-                .with_context(|| format!("Failed to rename temp file to {}", self.path.display()))?;
+        tokio::fs::rename(&temp_path, &self.path)
+            .await
+            .with_context(|| format!("Failed to rename temp file to {}", self.path.display()))?;
 
-            let json_path = self.path.with_file_name("subscriptions.json");
-            if let Ok(json_str) = serde_json::to_string_pretty(records) {
-                let _ = tokio::fs::write(&json_path, json_str).await;
-            }
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            let json = serde_json::to_string_pretty(records)
-                .context("Failed to serialize subscription records to JSON")?;
-
-            let temp_path = self.path.with_extension("tmp");
-            tokio::fs::write(&temp_path, json.as_bytes())
-                .await
-                .with_context(|| format!("Failed to write temp file {}", temp_path.display()))?;
-
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let perms = std::fs::Permissions::from_mode(0o600);
-                let _ = std::fs::set_permissions(&temp_path, perms);
-            }
-
-            tokio::fs::rename(&temp_path, &self.path)
-                .await
-                .with_context(|| format!("Failed to rename temp file to {}", self.path.display()))?;
-
-            // Also sync subscriptions.json if self.path is subscriptions.dat
-            let json_path = self.path.with_file_name("subscriptions.json");
-            if json_path != self.path {
-                let _ = tokio::fs::write(&json_path, json.as_bytes()).await;
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(&json_path, std::fs::Permissions::from_mode(0o600));
-                }
-            }
+        let json_path = self.path.with_file_name("subscriptions.json");
+        if let Ok(json_str) = serde_json::to_string_pretty(records) {
+            let _ = tokio::fs::write(&json_path, json_str).await;
         }
 
         tracing::debug!("Persisted {} subscription record(s)", records.len());
@@ -216,7 +137,7 @@ mod tests {
 
         let record = SubscriptionRecord::new("https://example.com/sub".to_string(), "My Sub".to_string());
 
-        store.save(&[record.clone()]).await.expect("save subscriptions");
+        store.save(std::slice::from_ref(&record)).await.expect("save subscriptions");
 
         let loaded = store.load().await.expect("load subscriptions");
         assert_eq!(loaded.len(), 1);

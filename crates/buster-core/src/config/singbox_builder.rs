@@ -1042,7 +1042,7 @@ mod tests {
             params.bypass_local_networks = true;
             params.block_quic = true;
             params.working_dir = Some(cores_dir);
-            if parsed.xray.as_ref().map_or(false, |x| x.protocol == XrayProtocol::Vless) {
+            if parsed.xray.as_ref().is_some_and(|x| x.protocol == XrayProtocol::Vless) {
                 params.vless_socks_detour_port = Some(10810);
             }
 
