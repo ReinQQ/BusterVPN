@@ -10,7 +10,7 @@ use tracing::{info, warn};
 
 pub const PRIMARY_MANIFEST_URL: &str = "https://vpn.buster.gripe/updates/manifest.json";
 pub const FALLBACK_MANIFEST_URL: &str = "https://buster.gripe/updates/manifest.json";
-pub const CURRENT_VERSION: &str = "1.5.3";
+pub const CURRENT_VERSION: &str = "1.5.4";
 
 pub const CORE_COMPONENTS: &[&str] = &[
     "sing-box.exe",
@@ -87,7 +87,7 @@ impl UpdaterService {
             .no_deflate()
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(30))
-            .user_agent("BusterVPN-Updater/1.5.3");
+            .user_agent("BusterVPN-Updater/1.5.4");
 
         if no_proxy {
             builder = builder.no_proxy();
@@ -644,8 +644,8 @@ mod tests {
 
     #[test]
     fn test_current_version() {
-        assert_eq!(CURRENT_VERSION, "1.5.3");
-        assert_eq!(parse_version_tuple(CURRENT_VERSION), Some((1, 5, 3)));
+        assert_eq!(CURRENT_VERSION, "1.5.4");
+        assert_eq!(parse_version_tuple(CURRENT_VERSION), Some((1, 5, 4)));
     }
 
     #[test]

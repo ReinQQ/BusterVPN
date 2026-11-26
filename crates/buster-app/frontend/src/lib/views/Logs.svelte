@@ -1,10 +1,10 @@
 <script>
   import { vpnStore } from '../stores/vpn.svelte.js';
   import { toast } from '../stores/toast.svelte.js';
-  import { t, localeStore } from '../stores/locale.svelte.js';
+  import { t } from '../stores/locale.svelte.js';
   import { Search, Copy, Trash2, ArrowDown, Check } from 'lucide-svelte';
-  import ServiceIcon from '../components/ServiceIcon.svelte';
-  import { matchService } from '../serviceIcons.js';
+  import AppIcon from '../components/AppIcon.svelte';
+  import { resolveLogBadge } from '../utils/appIcons.js';
 
   let filterLevel = $state('all');
   let searchQuery = $state('');
@@ -37,10 +37,17 @@
       const log = ring[i];
       const level = getLogLevel(log);
       if (levelFilter && level !== levelFilter) continue;
-      const text = getLogText(log).toLowerCase();
+      const rawText = getLogText(log);
       const stream = getLogStream(log);
-      if (query && !text.includes(query) && !stream.includes(query)) continue;
-      matches.push(log);
+      const badge = resolveLogBadge(rawText);
+      if (query) {
+        const textLower = rawText.toLowerCase();
+        const badgeNameLower = badge ? badge.name.toLowerCase() : '';
+        if (!textLower.includes(query) && !stream.includes(query) && !badgeNameLower.includes(query)) {
+          continue;
+        }
+      }
+      matches.push({ log, level, stream, msg: rawText, badge });
     }
     return matches.slice(-400);
   });
@@ -57,7 +64,7 @@
 
   function handleCopyLogs() {
     const text = filteredLogs
-      .map((l) => `[${l.timestamp || ''}] [${getLogLevel(l).toUpperCase()}] [${getLogStream(l)}] ${getLogText(l)}`)
+      .map((item) => `[${item.log.timestamp || ''}] [${item.level.toUpperCase()}] [${item.stream}] ${item.msg}`)
       .join('\n');
     navigator.clipboard.writeText(text);
     isCopied = true;
@@ -146,21 +153,15 @@
     {#if filteredLogs.length === 0}
       <div class="logs-empty text-slate-500 italic text-center py-8 font-mono text-sm">{t('logs.empty')}</div>
     {:else}
-      {#each filteredLogs as log, i (i)}
-        {@const lvl = getLogLevel(log)}
-        {@const stream = getLogStream(log)}
-        {@const msg = getLogText(log)}
-        {@const svc = matchService(msg)}
+      {#each filteredLogs as entry, i (i)}
+        {@const lvl = entry.level}
+        {@const stream = entry.stream}
+        {@const msg = entry.msg}
+        {@const badge = entry.badge}
         <div class="log-row leading-relaxed flex items-start gap-2 hover:bg-white/[0.04] px-1 py-0.5 rounded transition-colors font-mono">
           <span class="log-timestamp text-slate-400 shrink-0 select-none font-mono">
-            {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : '00:00:00'}
+            {entry.log.timestamp ? new Date(entry.log.timestamp).toLocaleTimeString() : '00:00:00'}
           </span>
-
-          {#if svc}
-            <span class="inline-flex items-center shrink-0" title={svc.name}>
-              <ServiceIcon name={svc} size={13} className="mt-0.5" />
-            </span>
-          {/if}
 
           <!-- Level Badge -->
           <span
@@ -176,6 +177,17 @@
           </span>
 
           <span class="log-stream text-slate-400 shrink-0 font-medium font-mono">[{stream}]</span>
+
+          {#if badge}
+            <span
+              class="log-app-pill inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-md shrink-0 select-none text-[10px] font-semibold leading-none mt-[1px]"
+              title={badge.path || badge.name}
+            >
+              <AppIcon app={badge} size={14} />
+              <span class="log-app-pill-label truncate max-w-[140px]">{badge.name}</span>
+            </span>
+          {/if}
+
           <span class="log-text text-slate-100 break-all font-mono select-text font-normal">{msg}</span>
         </div>
       {/each}

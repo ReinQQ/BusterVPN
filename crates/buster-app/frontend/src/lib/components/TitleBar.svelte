@@ -66,7 +66,7 @@
         Buster<span class="text-accent">VPN</span>
       </span>
       <span class="text-[9px] text-white/50 font-mono px-1.5 py-0.5 rounded bg-white/5 border border-white/5 leading-none">
-        v1.5.3-release
+        v1.5.4-release
       </span>
     </div>
 

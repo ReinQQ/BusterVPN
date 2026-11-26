@@ -545,6 +545,26 @@ html.theme-light .toggle-switch.is-checked .toggle-thumb,
   border: 1px solid rgba(21, 94, 117, 0.5); /* border-cyan-800/50 */
 }
 
+/* Process / App Pill Badge in Logs (Dark & Adaptive Light) */
+.log-app-pill {
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #f1f5f9;
+}
+
+.log-app-pill-label {
+  color: #f1f5f9;
+}
+
+.app-icon-invert-dark {
+  filter: brightness(0) invert(0.92);
+}
+
+html.theme-light .app-icon-invert-dark,
+.theme-light .app-icon-invert-dark {
+  filter: none;
+}
+
 /* Light Theme Adaptive Logs Card */
 html.theme-light .logs-terminal,
 .theme-light .logs-terminal {
@@ -612,6 +632,18 @@ html.theme-light .logs-terminal .log-badge.badge-debug,
   color: #155e75 !important; /* text-cyan-800 */
   border: 1px solid #67e8f9 !important; /* border border-cyan-300 */
   font-weight: 700 !important; /* font-bold */
+}
+
+html.theme-light .logs-terminal .log-app-pill,
+.theme-light .logs-terminal .log-app-pill {
+  background-color: rgba(241, 245, 249, 0.95) !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+html.theme-light .logs-terminal .log-app-pill-label,
+.theme-light .logs-terminal .log-app-pill-label {
+  color: #0f172a !important;
 }
 
 /* Modal Dialogs in Light Theme */
