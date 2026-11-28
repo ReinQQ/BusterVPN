@@ -209,6 +209,7 @@ fn main() {
             check_update,
             apply_update,
             pick_exe_file,
+            get_running_processes,
             import_content,
             update_tray_menu,
             check_dns_leak,

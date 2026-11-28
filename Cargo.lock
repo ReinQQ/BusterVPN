@@ -330,7 +330,7 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
 name = "buster-app"
-version = "1.5.4"
+version = "1.6.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "buster-core"
-version = "1.5.4"
+version = "1.6.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -373,7 +373,7 @@ dependencies = [
 
 [[package]]
 name = "buster-ctl"
-version = "1.5.4"
+version = "1.6.0"
 dependencies = [
  "anyhow",
  "buster-core",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "buster-service"
-version = "1.5.4"
+version = "1.6.0"
 dependencies = [
  "anyhow",
  "buster-core",
@@ -407,7 +407,7 @@ dependencies = [
 
 [[package]]
 name = "buster-windows"
-version = "1.5.4"
+version = "1.6.0"
 dependencies = [
  "anyhow",
  "buster-core",

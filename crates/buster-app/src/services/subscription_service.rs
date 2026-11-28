@@ -8,8 +8,8 @@ use buster_core::models::ServerProfile;
 use buster_core::parsing::{is_clash_yaml, parse_clash_profiles, parse_share_link};
 use crate::models::{SubscriptionBodyFormat, SubscriptionDocument, SubscriptionUserInfo};
 
-pub const APP_VERSION: &str = "1.5.4";
-pub const USER_AGENT: &str = "BusterVPN/1.5.4 (Windows NT 10.0; Win64; x64)";
+pub const APP_VERSION: &str = "1.6.0";
+pub const USER_AGENT: &str = "BusterVPN/1.6.0 (Windows NT 10.0; Win64; x64)";
 
 pub struct SubscriptionService {
     client: reqwest::Client,
@@ -252,8 +252,8 @@ mod tests {
 
     #[test]
     fn test_app_version_and_user_agent() {
-        assert_eq!(APP_VERSION, "1.5.4");
-        assert!(USER_AGENT.contains("1.5.4"));
+        assert_eq!(APP_VERSION, "1.6.0");
+        assert!(USER_AGENT.contains("1.6.0"));
     }
 
     #[test]

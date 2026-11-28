@@ -5,7 +5,6 @@
   import { localeStore, t } from '../stores/locale.svelte.js';
   import { toast } from '../stores/toast.svelte.js';
   import { updateStore } from '../stores/updateStore.svelte.js';
-  import { ACCENT_THEMES } from '../types.js';
   import { api } from '../api.js';
   import Toggle from '../components/Toggle.svelte';
   import {
@@ -22,6 +21,7 @@
     CheckCircle2,
     AlertTriangle,
     Server,
+    Sparkles,
   } from 'lucide-svelte';
 
   let isCheckingUpdate = $state(false);
@@ -29,6 +29,10 @@
   let isUpdatingCores = $state(false);
   let isApplyingUpdate = $state(false);
   let isServiceOperating = $state(false);
+  let badgeSparkles = $state([]);
+  let badgePulsing = $state(false);
+  let badgeSparkleSeq = 0;
+
   let serviceStatus = $state({
     installed: false,
     running: false,
@@ -71,6 +75,66 @@
       }
     }
   });
+
+  function emitBadgeSparkles(intense = false) {
+    const glyphs = ['✦', '✧', '✨', '★'];
+    const colors = ['#F472B6', '#C084FC', '#38BDF8', '#FACC15', '#2DD4BF'];
+    const count = intense ? 8 : 4;
+    const spawned = Array.from({ length: count }, (_, idx) => {
+      badgeSparkleSeq += 1;
+      const angle = ((Math.PI * 2) / count) * idx + (Math.random() - 0.5) * 0.5;
+      const dist = (intense ? 26 : 16) + Math.random() * 10;
+      return {
+        id: badgeSparkleSeq,
+        glyph: glyphs[badgeSparkleSeq % glyphs.length],
+        color: colors[badgeSparkleSeq % colors.length],
+        sx: `${Math.round(Math.cos(angle) * dist)}px`,
+        sy: `${Math.round(Math.sin(angle) * dist) - 6}px`,
+      };
+    });
+
+    badgeSparkles = [...badgeSparkles, ...spawned];
+    const spawnedIds = new Set(spawned.map((s) => s.id));
+    setTimeout(() => {
+      badgeSparkles = badgeSparkles.filter((s) => !spawnedIds.has(s.id));
+    }, 720);
+
+    badgePulsing = false;
+    requestAnimationFrame(() => {
+      badgePulsing = true;
+    });
+    setTimeout(() => {
+      badgePulsing = false;
+    }, 360);
+  }
+
+  function handleVersionBadgeClick() {
+    const res = themeStore.registerSecretClick();
+    if (res.unlockedNow) {
+      emitBadgeSparkles(true);
+      toast.success(t('toast.mlp_unlocked'), 'Equestria');
+      if (vpnStore.settings && vpnStore.settings.accent_theme !== themeStore.currentThemeId) {
+        vpnStore.settings.accent_theme = themeStore.currentThemeId;
+        api.saveSettings(vpnStore.settings);
+      }
+    } else if (!res.alreadyUnlocked && res.count >= 4 && res.count <= 6) {
+      emitBadgeSparkles(false);
+    }
+  }
+
+  function handleToggleMlpSecretMode(enabled) {
+    const val = typeof enabled === 'boolean' ? enabled : enabled?.target?.checked;
+    themeStore.setMlpSecretUnlocked(val);
+    if (vpnStore.settings && vpnStore.settings.accent_theme !== themeStore.currentThemeId) {
+      vpnStore.settings.accent_theme = themeStore.currentThemeId;
+      api.saveSettings(vpnStore.settings);
+    }
+  }
+
+  function handleTogglePonyCompanion(enabled) {
+    const val = typeof enabled === 'boolean' ? enabled : enabled?.target?.checked;
+    themeStore.setMlpPonyCompanionEnabled(val);
+  }
 
   async function handleManageService(action) {
     isServiceOperating = true;
@@ -129,7 +193,7 @@
   function handleSelectTheme(themeId) {
     themeStore.setTheme(themeId);
     if (vpnStore.settings) {
-      vpnStore.settings.accent_theme = themeId;
+      vpnStore.settings.accent_theme = themeStore.currentThemeId;
       api.saveSettings(vpnStore.settings);
     }
   }
@@ -153,7 +217,7 @@
       if (res.hasClientUpdate) {
         toast.info(t('settings.client_new_version', { version: res.clientVersion }), 'Update');
       } else {
-        toast.success(`v${updateStore.clientUpdate?.current_version || '1.5.4'}`, 'Up to date');
+        toast.success(`v${updateStore.clientUpdate?.current_version || '1.6.0'}`, 'Up to date');
       }
     } catch (e) {
       toast.error(`${e?.message || e}`, 'Update Check');
@@ -244,6 +308,13 @@
       status: isRu ? 'Несовпадение' : 'Mismatch',
       statusCls: 'text-amber-400',
     };
+  }
+
+  function getSwatchGradient(theme) {
+    if (theme.via) {
+      return `linear-gradient(135deg, ${theme.from}, ${theme.via}, ${theme.to})`;
+    }
+    return `linear-gradient(135deg, ${theme.from}, ${theme.to})`;
   }
 </script>
 
@@ -367,14 +438,14 @@
   </div>
 
   <!-- Section 2: Accent Themes (Live Switcher with Full Ambient Glow) -->
-  <div class="rounded-2xl p-4 bg-white/[0.03] border border-white/[0.08] shadow-lg transition-all duration-200 transform-gpu hover:border-white/20 hover:bg-white/[0.06]">
-    <div class="flex items-center gap-2.5 mb-3">
+  <div class="rounded-2xl p-4 bg-white/[0.03] border border-white/[0.08] shadow-lg transition-all duration-200 transform-gpu hover:border-white/20 hover:bg-white/[0.06] space-y-3">
+    <div class="flex items-center gap-2.5">
       <Palette class="w-4 h-4 text-[var(--accent)]" />
       <h3 class="font-unbounded font-semibold text-xs text-white">{t('settings.theme_title')}</h3>
     </div>
 
     <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-      {#each ACCENT_THEMES as theme}
+      {#each themeStore.visibleThemes as theme (theme.id)}
         {@const isSelected = themeStore.currentThemeId === theme.id}
         <button
           onclick={() => handleSelectTheme(theme.id)}
@@ -384,11 +455,11 @@
         >
           <div class="flex items-center gap-2.5 min-w-0">
             <div
-              class="w-6 h-6 rounded-full shrink-0 shadow-sm transition-transform duration-200 transform-gpu group-hover:scale-105 flex items-center justify-center"
-              style="background: linear-gradient(135deg, {theme.from}, {theme.via || theme.to}); box-shadow: 0 0 10px {theme.glow};"
+              class="w-6 h-6 rounded-full shrink-0 shadow-sm transition-transform duration-200 transform-gpu group-hover:scale-105 flex items-center justify-center ring-1 ring-black/15"
+              style="background: {getSwatchGradient(theme)}; box-shadow: 0 0 10px {theme.glow};"
             >
               {#if isSelected}
-                <Check class="w-3.5 h-3.5 text-white" />
+                <Check class="w-3.5 h-3.5 {theme.isLight ? 'text-slate-900' : 'text-white'}" />
               {/if}
             </div>
             <div class="min-w-0">
@@ -400,6 +471,41 @@
         </button>
       {/each}
     </div>
+
+    {#if themeStore.mlpSecretDiscovered}
+      <div class="pt-3 border-t border-white/10 space-y-2.5">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <Sparkles class="w-4 h-4 text-[var(--accent)] shrink-0" />
+            <div class="min-w-0">
+              <div class="text-xs font-unbounded font-semibold text-white">{t('settings.mlp_mode_title')}</div>
+              <div class="text-[11px] text-white/40">{t('settings.mlp_mode_desc')}</div>
+            </div>
+          </div>
+          <Toggle
+            checked={themeStore.mlpSecretUnlocked}
+            onchange={handleToggleMlpSecretMode}
+            activeColor="bg-fuchsia-500"
+            ariaLabel={t('settings.mlp_mode_title')}
+          />
+        </div>
+
+        {#if themeStore.mlpSecretUnlocked}
+          <div class="flex items-center justify-between gap-3 pt-2 border-t border-white/5">
+            <div class="min-w-0 pl-6">
+              <div class="text-xs font-medium text-white">{t('settings.mlp_companion_title')}</div>
+              <div class="text-[11px] text-white/40">{t('settings.mlp_companion_desc')}</div>
+            </div>
+            <Toggle
+              checked={themeStore.mlpPonyCompanionEnabled}
+              onchange={handleTogglePonyCompanion}
+              activeColor="bg-violet-500"
+              ariaLabel={t('settings.mlp_companion_title')}
+            />
+          </div>
+        {/if}
+      </div>
+    {/if}
   </div>
 
   <!-- Section 3: Updates & Engine Cores Integrity Card -->
@@ -555,7 +661,21 @@
       <div>
         <div class="text-xs font-medium text-white flex items-center gap-2">
           <span class="font-unbounded font-semibold">{t('settings.client_info')}</span>
-          <span class="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30">v1.5.4-release</span>
+          <button
+            type="button"
+            onclick={handleVersionBadgeClick}
+            class="relative text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/30 cursor-pointer select-none transition-transform focus:outline-none {badgePulsing ? 'secret-pulse-active' : ''}"
+          >
+            v1.6.0-release
+            {#each badgeSparkles as sp (sp.id)}
+              <span
+                class="secret-sparkle-particle absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[11px] font-bold pointer-events-none select-none"
+                style="--sx: {sp.sx}; --sy: {sp.sy}; color: {sp.color}; text-shadow: 0 0 6px {sp.color};"
+              >
+                {sp.glyph}
+              </span>
+            {/each}
+          </button>
         </div>
         <div class="text-[11px] text-white/40 mt-0.5">Rust 1.85 • Tauri v2 • Svelte 5 • WinAPI Native Engine</div>
       </div>

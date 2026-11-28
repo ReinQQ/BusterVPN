@@ -13,6 +13,7 @@ pub mod port;
 pub mod process;
 pub mod proxy;
 pub mod routes;
+pub mod running_processes;
 pub mod session_journal;
 
 pub use autostart::*;
@@ -27,4 +28,5 @@ pub use port::*;
 pub use process::*;
 pub use proxy::*;
 pub use routes::*;
+pub use running_processes::*;
 pub use session_journal::*;

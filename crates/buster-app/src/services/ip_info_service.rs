@@ -84,7 +84,7 @@ impl IpInfoService {
         let direct_client = reqwest::Client::builder()
             .connect_timeout(Duration::from_millis(1500))
             .timeout(Duration::from_millis(2500))
-            .user_agent("BusterVPN-Client/1.5.4")
+            .user_agent("BusterVPN-Client/1.6.0")
             .build()
             .unwrap_or_default();
 
@@ -97,7 +97,7 @@ impl IpInfoService {
             .connect_timeout(Duration::from_millis(1500))
             .timeout(Duration::from_millis(2500))
             .proxy(proxy)
-            .user_agent("BusterVPN-Client/1.5.4")
+            .user_agent("BusterVPN-Client/1.6.0")
             .build()
             .ok()
     }

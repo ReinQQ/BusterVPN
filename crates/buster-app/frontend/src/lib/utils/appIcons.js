@@ -1,5 +1,5 @@
 /**
- * Unified desktop application & web service SVG icon registry for BusterVPN v1.5.4.
+ * Unified desktop application & web service SVG icon registry for BusterVPN v1.6.0.
  * All SVG assets are stored locally under /icons/apps/ (sourced from https://thesvg.org/)
  * with zero runtime external network dependencies.
  */

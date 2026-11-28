@@ -3,7 +3,7 @@ use serde_json::{json, Map, Value};
 use crate::config::ConfigBuildError;
 use crate::models::{
     RoutingAction, RoutingMatchType, RoutingMode, RoutingRule,
-    ServerProfile, SplitTunnelingConfig, XrayProtocol, XraySecurity, XrayTransport,
+    ServerProfile, SplitTunnelMode, SplitTunnelingConfig, XrayProtocol, XraySecurity, XrayTransport,
 };
 use crate::models::profile::ParsedServer;
 
@@ -116,9 +116,37 @@ pub fn build_singbox_config(params: &SingboxBuildParams) -> Result<String, Confi
         collect_host(&w.host);
     }
 
+    let active_split = params
+        .split_tunneling
+        .as_ref()
+        .filter(|st| st.enabled)
+        .map(|st| {
+            let base = st.normalized_process_names();
+            let expanded = crate::models::expand_process_name_variants(&base);
+            let regexes = crate::models::build_process_path_regexes(&base);
+            (st.mode, expanded, regexes)
+        });
+
+    let is_proxy_selected = matches!(active_split, Some((SplitTunnelMode::ProxySelected, _, _)));
+
     let mut dns_rules = Vec::new();
 
-    // 1. Explicit rule: VPN server domain resolves via local DNS (direct) to eliminate domain lookup deadlock
+    if let Some((SplitTunnelMode::ProxySelected, ref expanded_names, ref path_regexes)) = active_split {
+        if !path_regexes.is_empty() {
+            dns_rules.push(json!({
+                "process_path_regex": path_regexes,
+                "server": "remote"
+            }));
+        }
+        if !expanded_names.is_empty() {
+            dns_rules.push(json!({
+                "process_name": expanded_names,
+                "server": "remote"
+            }));
+        }
+    }
+
+    // Explicit rule: VPN server domain resolves via local DNS (direct) to eliminate domain lookup deadlock
     if !server_domains.is_empty() {
         dns_rules.push(json!({
             "domain": server_domains,
@@ -126,18 +154,22 @@ pub fn build_singbox_config(params: &SingboxBuildParams) -> Result<String, Confi
         }));
     }
 
-    // 2. Rule-sets or domain suffixes for local bypass
-    if has_srs {
-        dns_rules.push(json!({
-            "rule_set": ["geosite-ru"],
-            "server": "local"
-        }));
-    } else {
-        dns_rules.push(json!({
-            "domain_suffix": [".ru", ".su", ".xn--p1ai", ".by", ".kz"],
-            "server": "local"
-        }));
+    if !is_proxy_selected {
+        // Rule-sets or domain suffixes for local bypass
+        if has_srs {
+            dns_rules.push(json!({
+                "rule_set": ["geosite-ru"],
+                "server": "local"
+            }));
+        } else {
+            dns_rules.push(json!({
+                "domain_suffix": [".ru", ".su", ".xn--p1ai", ".by", ".kz"],
+                "server": "local"
+            }));
+        }
     }
+
+    let dns_final = if is_proxy_selected { "local" } else { "remote" };
 
     root.insert(
         "dns".to_string(),
@@ -156,7 +188,7 @@ pub fn build_singbox_config(params: &SingboxBuildParams) -> Result<String, Confi
                 }
             ],
             "rules": dns_rules,
-            "final": "remote",
+            "final": dns_final,
             "strategy": "prefer_ipv4"
         }),
     );
@@ -262,14 +294,41 @@ pub fn build_singbox_config(params: &SingboxBuildParams) -> Result<String, Confi
     }
 
     let mut rules = Vec::new();
-    if params.vless_socks_detour_port.is_some() {
-        rules.push(json!({
-            "process_name": ["xray.exe"],
-            "outbound": "direct"
-        }));
-    }
+    // 1. Protocol sniffing
     rules.push(json!({ "action": "sniff" }));
+    // 2. DNS hijacking
     rules.push(json!({ "protocol": "dns", "action": "hijack-dns" }));
+    // 3. Internal loop-prevention rule for BusterVPN & engine binaries
+    rules.push(json!({
+        "process_name": ["xray.exe", "sing-box.exe", "buster-service.exe", "buster-app.exe"],
+        "outbound": "direct"
+    }));
+    // 4. Private LAN bypass
+    if params.bypass_local_networks {
+        rules.push(json!({ "ip_is_private": true, "outbound": "direct" }));
+    }
+
+    // 5. Split Tunneling rules (unscoped to any single inbound so TUN + mixed proxy both match;
+    // emitted as separate process_path_regex + expanded process_name rules for logical OR across
+    // case-insensitive Windows paths and fallback basename lookups).
+    if let Some((mode, ref expanded_names, ref path_regexes)) = active_split {
+        let outbound = match mode {
+            SplitTunnelMode::BypassSelected => "direct",
+            SplitTunnelMode::ProxySelected => "proxy",
+        };
+        if !path_regexes.is_empty() {
+            rules.push(json!({
+                "process_path_regex": path_regexes,
+                "outbound": outbound
+            }));
+        }
+        if !expanded_names.is_empty() {
+            rules.push(json!({
+                "process_name": expanded_names,
+                "outbound": outbound
+            }));
+        }
+    }
 
     // Direct route for VPN server host domain and its resolved IPs
     if !server_domains.is_empty() {
@@ -293,23 +352,21 @@ pub fn build_singbox_config(params: &SingboxBuildParams) -> Result<String, Confi
         }
     }
 
-    if params.block_quic {
+    if !is_proxy_selected {
+        if params.block_quic {
+            rules.push(json!({
+                "port": 443,
+                "network": "udp",
+                "action": "reject"
+            }));
+        }
+
+        // Route UDP STUN traffic through proxy so external STUN probes see VPN exit IP
         rules.push(json!({
-            "port": 443,
+            "port": [3478, 19302],
             "network": "udp",
-            "action": "reject"
+            "outbound": "proxy"
         }));
-    }
-
-    // Route UDP STUN traffic through proxy so external STUN probes see VPN exit IP
-    rules.push(json!({
-        "port": [3478, 19302],
-        "network": "udp",
-        "outbound": "proxy"
-    }));
-
-    if params.bypass_local_networks {
-        rules.push(json!({ "ip_is_private": true, "outbound": "direct" }));
     }
 
     if has_srs {
@@ -322,23 +379,6 @@ pub fn build_singbox_config(params: &SingboxBuildParams) -> Result<String, Confi
             "domain_suffix": [".ru", ".su", ".xn--p1ai", ".by", ".kz"],
             "outbound": "direct"
         }));
-    }
-
-    if let Some(ref st) = params.split_tunneling {
-        if st.enabled {
-            if !st.bypass_apps.is_empty() {
-                rules.push(json!({
-                    "process_name": st.bypass_apps,
-                    "outbound": "direct"
-                }));
-            }
-            if !st.proxy_apps.is_empty() {
-                rules.push(json!({
-                    "process_name": st.proxy_apps,
-                    "outbound": "proxy"
-                }));
-            }
-        }
     }
 
     for rule in params.routing_rules {
@@ -391,8 +431,10 @@ pub fn build_singbox_config(params: &SingboxBuildParams) -> Result<String, Confi
         }
     }
 
+    let route_final = if is_proxy_selected { "direct" } else { "proxy" };
+
     route_map.insert("rules".to_string(), Value::Array(rules));
-    route_map.insert("final".to_string(), json!("proxy"));
+    route_map.insert("final".to_string(), json!(route_final));
     route_map.insert("default_domain_resolver".to_string(), json!("local"));
     route_map.insert("auto_detect_interface".to_string(), Value::Bool(true));
 
@@ -855,21 +897,24 @@ mod tests {
         assert_eq!(proxy["server_port"], 10810);
         assert_eq!(proxy["version"], "5");
 
-        // Route checks (xray.exe direct rule at top, default_domain_resolver, modern actions)
+        // Route checks (exact priority order: sniff, hijack-dns, internal loop-prevention, private LAN, server bypass, QUIC, STUN)
         assert_eq!(v["route"]["default_domain_resolver"], "local");
         assert_eq!(v["route"]["final"], "proxy");
-        assert_eq!(v["route"]["rules"][0]["process_name"], json!(["xray.exe"]));
-        assert_eq!(v["route"]["rules"][0]["outbound"], "direct");
-        assert_eq!(v["route"]["rules"][1]["action"], "sniff");
-        assert_eq!(v["route"]["rules"][2]["protocol"], "dns");
-        assert_eq!(v["route"]["rules"][2]["action"], "hijack-dns");
-        assert_eq!(v["route"]["rules"][3]["domain"][0], "reality.example.com");
+        assert_eq!(v["route"]["rules"][0]["action"], "sniff");
+        assert_eq!(v["route"]["rules"][1]["protocol"], "dns");
+        assert_eq!(v["route"]["rules"][1]["action"], "hijack-dns");
+        assert_eq!(
+            v["route"]["rules"][2]["process_name"],
+            json!(["xray.exe", "sing-box.exe", "buster-service.exe", "buster-app.exe"])
+        );
+        assert_eq!(v["route"]["rules"][2]["outbound"], "direct");
+        assert_eq!(v["route"]["rules"][3]["ip_is_private"], true);
         assert_eq!(v["route"]["rules"][3]["outbound"], "direct");
-        assert_eq!(v["route"]["rules"][4]["action"], "reject");
-        assert_eq!(v["route"]["rules"][5]["network"], "udp");
-        assert_eq!(v["route"]["rules"][5]["outbound"], "proxy");
-        assert_eq!(v["route"]["rules"][6]["ip_is_private"], true);
-        assert_eq!(v["route"]["rules"][6]["outbound"], "direct");
+        assert_eq!(v["route"]["rules"][4]["domain"][0], "reality.example.com");
+        assert_eq!(v["route"]["rules"][4]["outbound"], "direct");
+        assert_eq!(v["route"]["rules"][5]["action"], "reject");
+        assert_eq!(v["route"]["rules"][6]["network"], "udp");
+        assert_eq!(v["route"]["rules"][6]["outbound"], "proxy");
     }
 
     #[test]
@@ -1083,8 +1128,13 @@ mod tests {
         assert_eq!(proxy["server"], "127.0.0.1");
         assert_eq!(proxy["server_port"], 10810);
         assert_eq!(proxy["version"], "5");
-        assert_eq!(v["route"]["rules"][0]["process_name"], json!(["xray.exe"]));
-        assert_eq!(v["route"]["rules"][0]["outbound"], "direct");
+        assert_eq!(v["route"]["rules"][0]["action"], "sniff");
+        assert_eq!(v["route"]["rules"][1]["action"], "hijack-dns");
+        assert_eq!(
+            v["route"]["rules"][2]["process_name"],
+            json!(["xray.exe", "sing-box.exe", "buster-service.exe", "buster-app.exe"])
+        );
+        assert_eq!(v["route"]["rules"][2]["outbound"], "direct");
 
         // 2. Without detour port: returns explicit Err (zero fallback to native sing-box VLESS)
         let mut params_no_detour = SingboxBuildParams::new(&parsed, RoutingMode::Tun);
@@ -1139,6 +1189,159 @@ mod tests {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 panic!("xray -test -config failed: status={:?}\nstdout: {}\nstderr: {}", output.status.code(), stdout, stderr);
+            }
+        }
+    }
+
+    #[test]
+    fn test_split_tunneling_path_normalization_and_modes() {
+        let link = "tuic://b53494e0-9e66-41ea-9c02-e20ecdd39ec2:mysecret@tuic.example.com:8443/?congestion_control=bbr&alpn=h3#TUICTest";
+        let parsed = parse_share_link(link).expect("Parse TUIC");
+
+        // Case A: BypassSelected with full Windows path, duplicates, and whitespace
+        let mut bypass_params = SingboxBuildParams::new(&parsed, RoutingMode::TunAndSystemProxy);
+        bypass_params.split_tunneling = Some(SplitTunnelingConfig {
+            enabled: true,
+            mode: SplitTunnelMode::BypassSelected,
+            apps: vec![
+                r"C:\Users\reinqq\AppData\Local\Discord\app-1.0.9270\Discord.exe".to_string(),
+                "  discord.exe  ".to_string(),
+                "steam.exe".to_string(),
+                "".to_string(),
+            ],
+            bypass_apps: vec![],
+            proxy_apps: vec![],
+        });
+
+        let bypass_json = build_singbox_config(&bypass_params).expect("Build bypass split config");
+        let bv: Value = serde_json::from_str(&bypass_json).expect("Valid JSON");
+        let b_rules = bv["route"]["rules"].as_array().expect("route rules");
+
+        assert_eq!(bv["route"]["final"], "proxy");
+        assert_eq!(bv["dns"]["final"], "remote");
+        assert_eq!(b_rules[0]["action"], "sniff");
+        assert_eq!(b_rules[1]["action"], "hijack-dns");
+        assert_eq!(
+            b_rules[2]["process_name"],
+            json!(["xray.exe", "sing-box.exe", "buster-service.exe", "buster-app.exe"])
+        );
+        assert_eq!(b_rules[3]["ip_is_private"], true);
+        assert_eq!(
+            b_rules[4]["process_path_regex"],
+            json!([
+                r"(?i)(?:^|[\\/])Discord\.exe$",
+                r"(?i)(?:^|[\\/])steam\.exe$"
+            ])
+        );
+        assert_eq!(b_rules[4]["outbound"], "direct");
+        assert!(b_rules[4].get("inbound").is_none());
+        assert_eq!(
+            b_rules[5]["process_name"],
+            json!(["Discord.exe", "discord.exe", "DISCORD.EXE", "steam.exe", "Steam.exe", "STEAM.EXE"])
+        );
+        assert_eq!(b_rules[5]["outbound"], "direct");
+        assert!(b_rules[5].get("inbound").is_none());
+
+        let geosite_idx = b_rules
+            .iter()
+            .position(|r| r.get("rule_set").is_some())
+            .expect("geosite-ru rule");
+        assert!(5 < geosite_idx, "Bypass split rules must precede geosite-ru");
+
+        // Case B: ProxySelected with lowercase "discord.exe" must match Windows "Discord.exe" case-insensitively
+        let mut proxy_params = SingboxBuildParams::new(&parsed, RoutingMode::TunAndSystemProxy);
+        proxy_params.split_tunneling = Some(SplitTunnelingConfig {
+            enabled: true,
+            mode: SplitTunnelMode::ProxySelected,
+            apps: vec!["discord.exe".to_string()],
+            bypass_apps: vec![],
+            proxy_apps: vec![],
+        });
+
+        let proxy_json = build_singbox_config(&proxy_params).expect("Build proxy split config");
+        let pv: Value = serde_json::from_str(&proxy_json).expect("Valid JSON");
+        let p_rules = pv["route"]["rules"].as_array().expect("route rules");
+
+        assert_eq!(pv["route"]["final"], "direct");
+        assert_eq!(pv["dns"]["final"], "local");
+        assert_eq!(
+            pv["dns"]["rules"][0]["process_path_regex"],
+            json!([r"(?i)(?:^|[\\/])discord\.exe$"])
+        );
+        assert_eq!(pv["dns"]["rules"][0]["server"], "remote");
+        assert_eq!(
+            pv["dns"]["rules"][1]["process_name"],
+            json!(["discord.exe", "Discord.exe", "DISCORD.EXE"])
+        );
+        assert_eq!(pv["dns"]["rules"][1]["server"], "remote");
+
+        assert_eq!(
+            p_rules[4]["process_path_regex"],
+            json!([r"(?i)(?:^|[\\/])discord\.exe$"])
+        );
+        assert_eq!(p_rules[4]["outbound"], "proxy");
+        assert!(p_rules[4].get("inbound").is_none());
+        assert_eq!(
+            p_rules[5]["process_name"],
+            json!(["discord.exe", "Discord.exe", "DISCORD.EXE"])
+        );
+        assert_eq!(p_rules[5]["outbound"], "proxy");
+        assert!(p_rules[5].get("inbound").is_none());
+
+        // Verify the emitted regex matches actual Windows mixed-case path & filename
+        let re = regex::Regex::new(p_rules[4]["process_path_regex"][0].as_str().unwrap())
+            .expect("valid regex");
+        assert!(re.is_match(r"C:\Users\reinqq\AppData\Local\Discord\app-1.0.9270\Discord.exe"));
+        assert!(re.is_match("Discord.exe"));
+        assert!(re.is_match("DISCORD.EXE"));
+        assert!(!re.is_match(r"C:\Tools\notdiscord.exe"));
+
+        let p_geosite_idx = p_rules
+            .iter()
+            .position(|r| r.get("rule_set").is_some())
+            .expect("geosite-ru rule");
+        assert!(5 < p_geosite_idx, "ProxySelected split rules must precede geosite-ru");
+
+        // Validate both configs against real sing-box.exe if bundled
+        let cores_dir = std::path::Path::new(r"C:\BUSTERVPN\antivpnv2\crates\buster-app\cores");
+        let singbox_exe = cores_dir.join("sing-box.exe");
+        if singbox_exe.is_file() {
+            let temp_dir = std::env::temp_dir();
+            for (label, mode) in [
+                ("bypass", SplitTunnelMode::BypassSelected),
+                ("proxy", SplitTunnelMode::ProxySelected),
+            ] {
+                let mut check_params = SingboxBuildParams::new(&parsed, RoutingMode::TunAndSystemProxy);
+                check_params.working_dir = Some(cores_dir);
+                check_params.split_tunneling = Some(SplitTunnelingConfig {
+                    enabled: true,
+                    mode,
+                    apps: vec![
+                        "discord.exe".to_string(),
+                        r"C:\Users\reinqq\AppData\Roaming\Telegram Desktop\Telegram.exe".to_string(),
+                    ],
+                    bypass_apps: vec![],
+                    proxy_apps: vec![],
+                });
+                let cfg = build_singbox_config(&check_params).expect("build check cfg");
+                let cfg_path = temp_dir.join(format!("test_split_{}_{}.json", label, std::process::id()));
+                std::fs::write(&cfg_path, &cfg).expect("write split cfg");
+
+                let output = std::process::Command::new(&singbox_exe)
+                    .current_dir(&temp_dir)
+                    .args(["check", "-c", cfg_path.to_str().unwrap()])
+                    .output()
+                    .expect("run sing-box check");
+                let _ = std::fs::remove_file(&cfg_path);
+
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    panic!(
+                        "sing-box check failed for split mode {}: status={:?}\nstdout: {}\nstderr: {}\nconfig:\n{}",
+                        label, output.status.code(), stdout, stderr, cfg
+                    );
+                }
             }
         }
     }

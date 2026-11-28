@@ -9,6 +9,7 @@
   import TitleBar from './lib/components/TitleBar.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
   import ToastContainer from './lib/components/ToastContainer.svelte';
+  import PonyCompanion from './lib/components/PonyCompanion.svelte';
 
   import Dashboard from './lib/views/Dashboard.svelte';
   import Servers from './lib/views/Servers.svelte';
@@ -49,16 +50,15 @@
       <div class="absolute inset-0 bg-[radial-gradient(circle_at_50%_35%,rgba(67,67,67,0.22)_0%,transparent_75%)]"></div>
     </div>
   {:else if themeStore.current?.isLight}
-    <!-- Unicorn Rainbow True Light Theme Background -->
     <div
       class="absolute inset-0 pointer-events-none transition-all duration-700 z-0 opacity-80"
-      style="background: linear-gradient(135deg, #F7F0AC 0%, #ACF7F0 50%, #F0ACF7 100%);"
+      style="background: {themeStore.currentGradient};"
     ></div>
   {:else}
     <!-- Standard Dark Theme Ambient Layer -->
     <div
       class="absolute inset-0 pointer-events-none transition-all duration-700 opacity-20 z-0"
-      style="background: linear-gradient(135deg, var(--theme-from) 0%, var(--theme-via, transparent) 50%, var(--theme-to) 100%), #0a0b10;"
+      style="background: {themeStore.currentGradient}, #0a0b10;"
     ></div>
     <!-- Decorative ambient glow blobs with dynamic accent colors -->
     <div class="absolute top-1/4 left-1/3 w-96 h-96 rounded-full bg-[var(--accent)]/15 blur-[120px] pointer-events-none transition-all duration-700 z-0"></div>
@@ -97,4 +97,8 @@
       </div>
     </main>
   </div>
+
+  {#if themeStore.mlpSecretUnlocked && themeStore.mlpPonyCompanionEnabled && themeStore.activePony}
+    <PonyCompanion pony={themeStore.activePony} />
+  {/if}
 </div>

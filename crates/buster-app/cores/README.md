@@ -1,6 +1,6 @@
 # Core Engine Binaries and Routing Databases
 
-BusterVPN v1.5.4 acts as an orchestrator and process supervisor for the **sing-box** core and **xray** sidecar on Windows, utilizing **Wintun** for TUN mode.
+BusterVPN v1.6.0 acts as an orchestrator and process supervisor for the **sing-box** core and **xray** sidecar on Windows, utilizing **Wintun** for TUN mode.
 
 ## Required Assets
 

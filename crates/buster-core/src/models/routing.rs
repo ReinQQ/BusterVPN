@@ -66,18 +66,19 @@ impl Default for RoutingOptions {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SplitTunnelingConfig {
+    #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
     pub mode: SplitTunnelMode, // "proxy_selected" | "bypass_selected"
     #[serde(default)]
-    pub apps: Vec<String>,      // For backward compatibility
+    pub apps: Vec<String>,
     #[serde(default)]
-    pub bypass_apps: Vec<String>, // Applications that bypass the VPN (direct)
+    pub bypass_apps: Vec<String>, // Legacy compatibility for older settings.json
     #[serde(default)]
-    pub proxy_apps: Vec<String>,  // Applications that route strictly through VPN (proxy)
+    pub proxy_apps: Vec<String>,  // Legacy compatibility for older settings.json
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SplitTunnelMode {
     #[serde(rename = "proxy_selected")]
     ProxySelected,
@@ -95,6 +96,112 @@ impl Default for SplitTunnelingConfig {
             bypass_apps: Vec::new(),
             proxy_apps: Vec::new(),
         }
+    }
+}
+
+/// Extracts a clean executable basename from any Windows/Unix path or raw filename.
+pub fn normalize_process_name(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_matches('"').trim_matches('\'').trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let basename = trimmed
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim();
+    if basename.is_empty() {
+        return None;
+    }
+    Some(basename.to_string())
+}
+
+fn escape_regex_literal(input: &str) -> String {
+    let mut escaped = String::with_capacity(input.len() + 8);
+    for ch in input.chars() {
+        if matches!(
+            ch,
+            '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$'
+        ) {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
+/// Expands each process basename into standard Windows casing variants
+/// (`original`, `lowercase`, `Capitalized`, `UPPERCASE`) without duplicates.
+pub fn expand_process_name_variants(names: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut expanded = Vec::with_capacity(names.len() * 3);
+
+    for name in names {
+        let lower = name.to_ascii_lowercase();
+        let upper = name.to_ascii_uppercase();
+        let mut chars = lower.chars();
+        let capitalized = match chars.next() {
+            Some(first) => {
+                let mut s = String::with_capacity(lower.len());
+                s.push(first.to_ascii_uppercase());
+                s.push_str(chars.as_str());
+                s
+            }
+            None => String::new(),
+        };
+
+        for candidate in [name.clone(), lower, capitalized, upper] {
+            if !candidate.is_empty() && seen.insert(candidate.clone()) {
+                expanded.push(candidate);
+            }
+        }
+    }
+
+    expanded
+}
+
+/// Builds Go/RE2 case-insensitive `process_path_regex` patterns matching each executable basename.
+pub fn build_process_path_regexes(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| format!(r"(?i)(?:^|[\\/]){}$", escape_regex_literal(name)))
+        .collect()
+}
+
+impl SplitTunnelingConfig {
+    /// Returns deduplicated, basename-normalized process names for the active split-tunnel mode.
+    /// Falls back to legacy `bypass_apps`/`proxy_apps` when `apps` is empty.
+    pub fn normalized_process_names(&self) -> Vec<String> {
+        let source: &[String] = if !self.apps.is_empty() {
+            &self.apps
+        } else {
+            match self.mode {
+                SplitTunnelMode::BypassSelected => &self.bypass_apps,
+                SplitTunnelMode::ProxySelected => &self.proxy_apps,
+            }
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::with_capacity(source.len());
+        for entry in source {
+            if let Some(name) = normalize_process_name(entry) {
+                let key = name.to_ascii_lowercase();
+                if seen.insert(key) {
+                    result.push(name);
+                }
+            }
+        }
+        result
+    }
+
+    /// Returns expanded casing variants for `sing-box` `"process_name"` rules.
+    pub fn expanded_process_names(&self) -> Vec<String> {
+        expand_process_name_variants(&self.normalized_process_names())
+    }
+
+    /// Returns Go/RE2 case-insensitive regex patterns for `sing-box` `"process_path_regex"` rules.
+    pub fn process_path_regexes(&self) -> Vec<String> {
+        build_process_path_regexes(&self.normalized_process_names())
     }
 }
 

@@ -196,6 +196,14 @@ class VpnStore {
     }
   }
 
+  async reconnect() {
+    if (this.status !== ConnectionStatus.Connected) {
+      return;
+    }
+    const targetId = this.activeProfileId || this.activeProfile?.id || null;
+    await this.connect(targetId);
+  }
+
   async connect(profileId = null) {
     let targetId = profileId || this.activeProfileId;
     if (!targetId) {

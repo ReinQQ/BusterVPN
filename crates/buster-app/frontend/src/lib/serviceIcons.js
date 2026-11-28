@@ -1,5 +1,5 @@
 /**
- * Compatibility facade re-exporting BusterVPN v1.5.4 unified app & service icon registry.
+ * Compatibility facade re-exporting BusterVPN v1.6.0 unified app & service icon registry.
  */
 import { APP_ICONS, resolveAppIcon } from './utils/appIcons.js';
 

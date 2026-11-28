@@ -1,15 +1,69 @@
 <script>
   import { vpnStore } from '../stores/vpn.svelte.js';
+  import { themeStore } from '../stores/theme.svelte.js';
+  import { toast } from '../stores/toast.svelte.js';
   import { t } from '../stores/locale.svelte.js';
   import { Minus, Square, X } from 'lucide-svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
 
-  const appWindow = getCurrentWindow();
+  function getAppWindow() {
+    if (typeof window !== 'undefined' && window.__TAURI_INTERNALS__) {
+      return getCurrentWindow();
+    }
+    return null;
+  }
+
+  let logoSparkles = $state([]);
+  let logoPulsing = $state(false);
+  let sparkleSeq = 0;
+
+  function emitLogoSparkles(intense = false) {
+    const glyphs = ['✦', '✧', '✨', '★'];
+    const colors = ['#F472B6', '#C084FC', '#38BDF8', '#FACC15', '#2DD4BF'];
+    const count = intense ? 8 : 4;
+    const spawned = Array.from({ length: count }, (_, idx) => {
+      sparkleSeq += 1;
+      const angle = ((Math.PI * 2) / count) * idx + (Math.random() - 0.5) * 0.5;
+      const dist = (intense ? 20 : 13) + Math.random() * 10;
+      return {
+        id: sparkleSeq,
+        glyph: glyphs[sparkleSeq % glyphs.length],
+        color: colors[sparkleSeq % colors.length],
+        sx: `${Math.round(Math.cos(angle) * dist)}px`,
+        sy: `${Math.round(Math.sin(angle) * dist) - 4}px`,
+      };
+    });
+
+    logoSparkles = [...logoSparkles, ...spawned];
+    const spawnedIds = new Set(spawned.map((s) => s.id));
+    setTimeout(() => {
+      logoSparkles = logoSparkles.filter((s) => !spawnedIds.has(s.id));
+    }, 720);
+
+    logoPulsing = false;
+    requestAnimationFrame(() => {
+      logoPulsing = true;
+    });
+    setTimeout(() => {
+      logoPulsing = false;
+    }, 360);
+  }
+
+  function handleLogoClick(e) {
+    e?.stopPropagation();
+    const res = themeStore.registerSecretClick();
+    if (res.unlockedNow) {
+      emitLogoSparkles(true);
+      toast.success(t('toast.mlp_unlocked'), 'Equestria');
+    } else if (!res.alreadyUnlocked && res.count >= 4 && res.count <= 6) {
+      emitLogoSparkles(false);
+    }
+  }
 
   async function handleMinimize(e) {
     e?.stopPropagation();
     try {
-      await appWindow.minimize();
+      await getAppWindow()?.minimize();
     } catch (err) {
       console.warn('Window minimize error:', err);
     }
@@ -18,7 +72,7 @@
   async function handleMaximize(e) {
     e?.stopPropagation();
     try {
-      await appWindow.toggleMaximize();
+      await getAppWindow()?.toggleMaximize();
     } catch (err) {
       console.warn('Window toggleMaximize error:', err);
     }
@@ -27,7 +81,7 @@
   async function handleClose(e) {
     e?.stopPropagation();
     try {
-      await appWindow.close();
+      await getAppWindow()?.close();
     } catch (err) {
       console.warn('Window close error:', err);
     }
@@ -37,7 +91,7 @@
     // Only drag on left click and when not clicking an interactive element
     if (e.button === 0 && !e.target.closest('button, a, input, select, textarea')) {
       try {
-        appWindow.startDragging();
+        getAppWindow()?.startDragging();
       } catch (err) {
         // Fallback to data-tauri-drag-region
       }
@@ -61,12 +115,28 @@
   <!-- Left branding & status (pointer-events-none so it doesn't block window drag) -->
   <div data-tauri-drag-region class="flex items-center gap-3 pointer-events-none select-none">
     <div class="flex items-center gap-2.5">
-      <img src="/icons/buster.png" alt="BusterVPN" class="w-6 h-6 object-contain rounded drop-shadow shrink-0" />
+      <button
+        type="button"
+        onmousedown={(e) => e.stopPropagation()}
+        onclick={handleLogoClick}
+        aria-label="BusterVPN"
+        class="relative flex items-center justify-center rounded pointer-events-auto cursor-pointer focus:outline-none {logoPulsing ? 'secret-pulse-active' : ''}"
+      >
+        <img src="/icons/buster.png" alt="BusterVPN" class="w-6 h-6 object-contain rounded drop-shadow shrink-0 pointer-events-none" />
+        {#each logoSparkles as sp (sp.id)}
+          <span
+            class="secret-sparkle-particle absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[11px] font-bold pointer-events-none select-none"
+            style="--sx: {sp.sx}; --sy: {sp.sy}; color: {sp.color}; text-shadow: 0 0 6px {sp.color};"
+          >
+            {sp.glyph}
+          </span>
+        {/each}
+      </button>
       <span class="font-unbounded font-bold text-xs tracking-tight text-white/95 flex items-center leading-none">
         Buster<span class="text-accent">VPN</span>
       </span>
       <span class="text-[9px] text-white/50 font-mono px-1.5 py-0.5 rounded bg-white/5 border border-white/5 leading-none">
-        v1.5.4-release
+        v1.6.0-release
       </span>
     </div>
 

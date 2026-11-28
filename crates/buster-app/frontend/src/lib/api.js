@@ -35,7 +35,9 @@ let mockSettings = {
   split_tunneling: {
     enabled: false,
     mode: 'bypass_selected',
-    apps: ['discord.exe', 'telegram.exe'],
+    apps: ['Discord.exe', 'Telegram.exe'],
+    bypass_apps: [],
+    proxy_apps: [],
   },
   dns_profile: 'Standard',
   kill_switch: false,
@@ -46,7 +48,7 @@ let mockSettings = {
 };
 
 let mockLogs = [
-  { level: 'info', stream: 'stdout', text: 'BusterVPN Core v1.5.4 initialized on Windows 11', message: 'BusterVPN Core v1.5.4 initialized on Windows 11', timestamp: new Date().toISOString() },
+  { level: 'info', stream: 'stdout', text: 'BusterVPN Core v1.6.0 initialized on Windows 11', message: 'BusterVPN Core v1.6.0 initialized on Windows 11', timestamp: new Date().toISOString() },
   { level: 'info', stream: 'stdout', text: 'Safe Job Object limits applied: KILL_ON_JOB_CLOSE', message: 'Safe Job Object limits applied: KILL_ON_JOB_CLOSE', timestamp: new Date().toISOString() },
   { level: 'info', stream: 'stdout', text: 'Ready to connect. All route engines stand by.', message: 'Ready to connect. All route engines stand by.', timestamp: new Date().toISOString() },
 ];
@@ -194,8 +196,8 @@ function mockInvoke(cmd, args) {
         case 'check_update':
           resolve({
             update_available: false,
-            current_version: '1.5.4',
-            latest_version: '1.5.4',
+            current_version: '1.6.0',
+            latest_version: '1.6.0',
             download_url: null,
             release_notes: null,
           });
@@ -204,7 +206,19 @@ function mockInvoke(cmd, args) {
           resolve();
           break;
         case 'pick_exe_file':
-          resolve('discord.exe');
+          resolve('Discord.exe');
+          break;
+        case 'get_running_processes':
+          resolve([
+            { name: 'chrome.exe', path: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' },
+            { name: 'Discord.exe', path: 'C:\\Users\\User\\AppData\\Local\\Discord\\app-1.0.9270\\Discord.exe' },
+            { name: 'firefox.exe', path: 'C:\\Program Files\\Mozilla Firefox\\firefox.exe' },
+            { name: 'obs64.exe', path: 'C:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe' },
+            { name: 'qbittorrent.exe', path: 'C:\\Program Files\\qBittorrent\\qbittorrent.exe' },
+            { name: 'Spotify.exe', path: 'C:\\Users\\User\\AppData\\Roaming\\Spotify\\Spotify.exe' },
+            { name: 'steam.exe', path: 'C:\\Program Files (x86)\\Steam\\steam.exe' },
+            { name: 'Telegram.exe', path: 'C:\\Users\\User\\AppData\\Roaming\\Telegram Desktop\\Telegram.exe' },
+          ]);
           break;
         case 'import_content':
           resolve(1);
@@ -253,6 +267,7 @@ export const api = {
   importShareLink: (link) => invokeTauri('import_share_link', { link }),
   importContent: (content) => invokeTauri('import_content', { content }),
   pickExeFile: () => invokeTauri('pick_exe_file'),
+  getRunningProcesses: () => invokeTauri('get_running_processes'),
   updateTrayMenu: (status = null, activeProfile = null, profiles = null) =>
     invokeTauri('update_tray_menu', { status, active_profile: activeProfile, activeProfile, profiles }),
   getSubscriptions: () => invokeTauri('get_subscriptions'),

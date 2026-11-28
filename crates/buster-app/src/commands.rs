@@ -8,7 +8,7 @@ use std::time::Duration;
 use uuid::Uuid;
 use buster_core::models::{ConnectionStatus, ServerProfile};
 use buster_core::parsing::parse_share_link;
-use buster_windows::LogLine;
+use buster_windows::{LogLine, RunningProcessInfo};
 
 use crate::models::{AppSettings, SubscriptionRecord};
 use crate::services::{
@@ -472,6 +472,14 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_running_processes() -> Result<Vec<RunningProcessInfo>, String> {
+    tokio::task::spawn_blocking(buster_windows::list_running_processes)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
